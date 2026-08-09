@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.organizations import router as organizations_router
 from app.api.v1.users import router as users_router
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
     application = FastAPI(title=settings.app_name)
     application.include_router(auth_router)
     application.include_router(users_router)
+    application.include_router(organizations_router)
     application.add_exception_handler(NotFoundError, _handle_not_found)
     return application
 

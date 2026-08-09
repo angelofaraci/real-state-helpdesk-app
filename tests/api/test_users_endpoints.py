@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from app.api import deps
+from app.core.exceptions import NotFoundError as CoreNotFoundError
 from app.core.session import get_session
 from app.main import app
 from app.models.enums import UserRole, UserStatus
@@ -158,3 +159,107 @@ def test_reissue_invite_maps_service_errors_to_the_right_status(
     response = client.post(f"/api/v1/users/{uuid4()}/invite")
 
     assert response.status_code == expected_status
+
+
+# --- list / get / patch / delete (Work Unit 4) ------------------------------
+
+
+def test_list_users_returns_200_with_users(client, monkeypatch) -> None:
+    admin = _fake_principal()
+    app.dependency_overrides[deps.get_principal] = lambda: admin
+    users = [_make_invited_user(admin)]
+    monkeypatch.setattr(user_service, "list_users", AsyncMock(return_value=users))
+
+    response = client.get("/api/v1/users")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_list_users_forwards_role_and_status_query_filters(client, monkeypatch) -> None:
+    admin = _fake_principal()
+    app.dependency_overrides[deps.get_principal] = lambda: admin
+    mock_list = AsyncMock(return_value=[])
+    monkeypatch.setattr(user_service, "list_users", mock_list)
+
+    response = client.get("/api/v1/users", params={"role": "agent", "status": "active"})
+
+    assert response.status_code == 200
+    assert mock_list.call_args.kwargs["role"] == UserRole.AGENT
+    assert mock_list.call_args.kwargs["status"] == UserStatus.ACTIVE
+
+
+def test_get_user_returns_200(client, monkeypatch) -> None:
+    admin = _fake_principal()
+    app.dependency_overrides[deps.get_principal] = lambda: admin
+    target = _make_invited_user(admin)
+    monkeypatch.setattr(user_service, "get_user", AsyncMock(return_value=target))
+
+    response = client.get(f"/api/v1/users/{target.id}")
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "jane@example.com"
+
+
+def test_get_user_maps_not_found_to_404(client, monkeypatch) -> None:
+    admin = _fake_principal()
+    app.dependency_overrides[deps.get_principal] = lambda: admin
+    monkeypatch.setattr(
+        user_service,
+        "get_user",
+        AsyncMock(side_effect=CoreNotFoundError("User", uuid4())),
+    )
+
+    response = client.get(f"/api/v1/users/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+def test_update_user_returns_200(client, monkeypatch) -> None:
+    admin = _fake_principal()
+    app.dependency_overrides[deps.get_principal] = lambda: admin
+    target = _make_invited_user(admin)
+    target.name = "New Name"
+    monkeypatch.setattr(user_service, "update_user", AsyncMock(return_value=target))
+
+    response = client.patch(f"/api/v1/users/{target.id}", json={"name": "New Name"})
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "New Name"
+
+
+def test_delete_user_returns_200_and_soft_deletes(client, monkeypatch) -> None:
+    admin = _fake_principal()
+    app.dependency_overrides[deps.get_principal] = lambda: admin
+    target = _make_invited_user(admin)
+    target.status = UserStatus.DISABLED
+    mock_disable = AsyncMock(return_value=target)
+    monkeypatch.setattr(user_service, "disable_user", mock_disable)
+
+    response = client.delete(f"/api/v1/users/{target.id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "disabled"
+
+
+def _super_admin() -> User:
+    principal = _fake_principal()
+    principal.organization_id = None  # ADMIN role but no org -> super-admin
+    return principal
+
+
+@pytest.mark.parametrize(
+    "principal", [_fake_principal(role=UserRole.AGENT), _super_admin()]
+)
+def test_users_crud_endpoints_reject_non_org_admins(client, principal) -> None:
+    """`require_org_admin`'s full role/org-id matrix is unit-tested in
+    `test_deps_admin_guards.py`; here one non-admin role and the
+    super-admin edge case are enough to prove the guard is wired onto
+    every route (list/get/patch/delete are declared separately, unlike
+    the router-level guard on `/organizations`)."""
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+
+    assert client.get("/api/v1/users").status_code == 403
+    assert client.get(f"/api/v1/users/{uuid4()}").status_code == 403
+    assert client.patch(f"/api/v1/users/{uuid4()}", json={"name": "X"}).status_code == 403
+    assert client.delete(f"/api/v1/users/{uuid4()}").status_code == 403

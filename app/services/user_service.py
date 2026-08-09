@@ -1,10 +1,16 @@
-"""Admin-driven user invitation flow: invite a new user, reissue an invite.
+"""User service: admin-driven invite flow, plus org-admin user CRUD.
 
-Full user CRUD (list/get/patch/delete) is out of scope here; see a later
-work unit. Org scoping here follows the same "plain repository, filter by
-the principal's own `organization_id` directly" style established by
-`RefreshTokenRepository` — the org-scoped `ScopedRepository` pattern is
-introduced in a later work unit.
+The invite flow (`invite_user`/`reissue_invite`) predates `OrgScope` and
+still follows the "plain repository, filter by the principal's own
+`organization_id` directly" style established by `RefreshTokenRepository` —
+it is left as-is here to avoid retrofitting it onto `OrgScope` in the same
+slice that introduces user CRUD.
+
+The CRUD functions below (`list_users`/`get_user`/`update_user`/
+`disable_user`) are new: they take an `OrgScope` (built by
+`app.api.deps.require_org_admin` from the authenticated principal) and go
+through the org-scoped `UserRepository`, so a cross-org id surfaces as
+`app.core.exceptions.NotFoundError` automatically via `get_or_404`.
 """
 
 from uuid import UUID
@@ -13,9 +19,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.scope import OrgScope
 from app.models.enums import UserRole, UserStatus
 from app.models.user import User
 from app.repositories.invite_token_repository import InviteTokenRepository
+from app.repositories.user_repository import UserRepository
 from app.services.mailer_service import send_invite_email
 
 
@@ -92,6 +100,47 @@ async def reissue_invite(session: AsyncSession, *, admin: User, user_id: UUID) -
     await repo.delete_unused_for_user(user.id)
     await _issue_and_send_invite(session, user, repo=repo)
     return user
+
+
+async def list_users(
+    session: AsyncSession,
+    *,
+    scope: OrgScope,
+    role: UserRole | None = None,
+    status: UserStatus | None = None,
+) -> list[User]:
+    """List every user in `scope`'s organization, optionally filtered by
+    `role` and/or `status`."""
+    repo = UserRepository(session, scope)
+    result = await session.execute(repo.list(role=role, status=status))
+    return list(result.scalars().all())
+
+
+async def get_user(session: AsyncSession, *, scope: OrgScope, user_id: UUID) -> User:
+    """Fetch a single user in `scope`'s organization. Raises
+    `app.core.exceptions.NotFoundError` if the user does not exist or
+    belongs to a different organization."""
+    repo = UserRepository(session, scope)
+    return await repo.get_or_404(user_id)
+
+
+async def update_user(
+    session: AsyncSession, *, scope: OrgScope, user_id: UUID, **fields: object
+) -> User:
+    """Update `name`/`role` on a user in `scope`'s organization. Raises
+    `app.core.exceptions.NotFoundError` if the user does not exist or
+    belongs to a different organization."""
+    repo = UserRepository(session, scope)
+    return await repo.update(user_id, **fields)
+
+
+async def disable_user(session: AsyncSession, *, scope: OrgScope, user_id: UUID) -> User:
+    """Soft-delete a user in `scope`'s organization by setting
+    `status = DISABLED` — the row is never actually deleted. Raises
+    `app.core.exceptions.NotFoundError` if the user does not exist or
+    belongs to a different organization."""
+    repo = UserRepository(session, scope)
+    return await repo.update(user_id, status=UserStatus.DISABLED)
 
 
 def _require_org_admin(admin: User) -> None:

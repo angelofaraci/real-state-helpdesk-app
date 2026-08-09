@@ -14,6 +14,14 @@ class InviteUserRequest(BaseModel):
     role: UserRole
 
 
+class UserUpdate(BaseModel):
+    """Fields editable via `PATCH /api/v1/users/{id}`. Email and password
+    are deliberately not editable through this endpoint in stage 1."""
+
+    name: str | None = None
+    role: UserRole | None = None
+
+
 class UserResponse(BaseModel):
     id: UUID
     organization_id: UUID | None
