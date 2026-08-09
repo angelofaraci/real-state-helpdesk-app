@@ -79,3 +79,21 @@ async def require_org_admin(principal: User = Depends(get_principal)) -> OrgScop
             detail="admin privileges required",
         )
     return OrgScope.from_principal(principal)
+
+
+async def require_org_staff(principal: User = Depends(get_principal)) -> OrgScope:
+    """Require the acting principal to be an org-scoped admin or agent, and
+    return their `OrgScope`. Raises 403 for the tenant/owner roles and for
+    a super-admin (`organization_id is None`), which has no org scope.
+
+    Used for read access to properties/contracts: browsing that data is a
+    staff concept in this stage (assumption — the approved design does not
+    pin read access to a specific role set beyond "admin writes"), not
+    something a tenant/owner does directly.
+    """
+    if principal.role not in (UserRole.ADMIN, UserRole.AGENT) or principal.organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="staff privileges required",
+        )
+    return OrgScope.from_principal(principal)
