@@ -4,9 +4,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.categories import router as categories_router
 from app.api.v1.contracts import router as contracts_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.properties import router as properties_router
+from app.api.v1.urgency_levels import router as urgency_levels_router
 from app.api.v1.users import router as users_router
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
@@ -30,6 +32,8 @@ def create_app() -> FastAPI:
     application.include_router(organizations_router)
     application.include_router(properties_router)
     application.include_router(contracts_router)
+    application.include_router(categories_router)
+    application.include_router(urgency_levels_router)
     application.add_exception_handler(NotFoundError, _handle_not_found)
     return application
 
