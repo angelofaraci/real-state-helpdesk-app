@@ -22,15 +22,24 @@ from app.core.security import (
 )
 from app.models.enums import UserStatus
 from app.models.user import User
+from app.repositories.invite_token_repository import InviteTokenRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 
 _GENERIC_AUTH_FAILURE = "invalid email or password"
 _GENERIC_REFRESH_FAILURE = "invalid or expired refresh token"
+_GENERIC_INVITE_FAILURE = "invalid or expired invite token"
 
 
 class AuthenticationError(Exception):
     """Raised for any login/refresh failure. Always carries a generic,
     user-enumeration-safe message."""
+
+
+class InviteAcceptError(Exception):
+    """Raised for any accept-invite failure (unknown, expired, already-used,
+    or orphaned token). Always carries a single generic message so a caller
+    cannot distinguish which of those cases occurred, avoiding a state-
+    enumeration signal."""
 
 
 @dataclass
@@ -97,6 +106,40 @@ async def logout(session: AsyncSession, *, raw_refresh_token: str) -> None:
     if token_row is None:
         return
     await repo.revoke_family(token_row.family_id)
+
+
+async def accept_invite(
+    session: AsyncSession, *, raw_token: str, new_password: str
+) -> TokenPair:
+    """Activate the pending user tied to `raw_token`: set their password,
+    mark them active, consume the invite token, and issue a fresh
+    access/refresh pair.
+
+    Every failure (unknown token, already-used token, expired token, or a
+    token whose user is no longer `pending`) raises the same
+    `InviteAcceptError` with an identical message, so the response never
+    leaks which of those cases occurred.
+    """
+    invite_repo = InviteTokenRepository(session)
+    token_row = await invite_repo.consume(raw_token)
+
+    if token_row is None or token_row.used_at is not None:
+        raise InviteAcceptError(_GENERIC_INVITE_FAILURE)
+
+    if token_row.expires_at < datetime.now(UTC):
+        raise InviteAcceptError(_GENERIC_INVITE_FAILURE)
+
+    stmt = select(User).where(User.id == token_row.user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if user is None or user.status != UserStatus.PENDING:
+        raise InviteAcceptError(_GENERIC_INVITE_FAILURE)
+
+    user.password_hash = hash_password(new_password)
+    user.status = UserStatus.ACTIVE
+    await invite_repo.mark_used(token_row)
+
+    return await _issue_pair(session, user)
 
 
 async def _issue_pair(

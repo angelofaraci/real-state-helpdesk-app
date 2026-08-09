@@ -32,6 +32,11 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class AcceptInviteRequest(BaseModel):
+    token: str
+    new_password: PasswordStr
+
+
 class TokenPairResponse(BaseModel):
     access_token: str
     refresh_token: str

@@ -18,7 +18,7 @@ from app.core.security import hash_password
 from app.models.enums import UserRole, UserStatus
 from app.models.user import User
 from app.services import auth_service
-from app.services.auth_service import AuthenticationError
+from app.services.auth_service import AuthenticationError, InviteAcceptError
 
 
 def _make_user(**overrides) -> User:
@@ -217,3 +217,108 @@ async def test_logout_is_a_no_op_for_an_unknown_token(_mock_refresh_repo) -> Non
     await auth_service.logout(session, raw_refresh_token="does-not-exist")
 
     _mock_refresh_repo.revoke_family.assert_not_awaited()
+
+
+@pytest.fixture
+def _mock_invite_repo(monkeypatch):
+    repo_instance = AsyncMock()
+    monkeypatch.setattr(
+        auth_service, "InviteTokenRepository", MagicMock(return_value=repo_instance)
+    )
+    return repo_instance
+
+
+def _make_invite_token_row(**overrides):
+    defaults = dict(
+        user_id=uuid4(),
+        used_at=None,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    defaults.update(overrides)
+    row = MagicMock()
+    for key, value in defaults.items():
+        setattr(row, key, value)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_activates_pending_user_and_issues_a_token_pair(
+    _mock_invite_repo, _mock_refresh_repo
+) -> None:
+    pending_user = _make_user(status=UserStatus.PENDING, password_hash=None)
+    token_row = _make_invite_token_row(user_id=pending_user.id)
+    _mock_invite_repo.consume.return_value = token_row
+    session = _session_returning_user(pending_user)
+
+    pair = await auth_service.accept_invite(
+        session, raw_token="raw-invite-token", new_password="a-strong-password"
+    )
+
+    assert pair.access_token
+    assert pending_user.status == UserStatus.ACTIVE
+    assert pending_user.password_hash is not None
+    _mock_invite_repo.mark_used.assert_awaited_once_with(token_row)
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_rejects_an_unknown_token(_mock_invite_repo) -> None:
+    _mock_invite_repo.consume.return_value = None
+    session = AsyncMock()
+
+    with pytest.raises(InviteAcceptError):
+        await auth_service.accept_invite(
+            session, raw_token="does-not-exist", new_password="a-strong-password"
+        )
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_rejects_an_already_used_token(_mock_invite_repo) -> None:
+    token_row = _make_invite_token_row(used_at=datetime.now(UTC))
+    _mock_invite_repo.consume.return_value = token_row
+    session = AsyncMock()
+
+    with pytest.raises(InviteAcceptError):
+        await auth_service.accept_invite(
+            session, raw_token="reused-token", new_password="a-strong-password"
+        )
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_rejects_an_expired_token(_mock_invite_repo) -> None:
+    token_row = _make_invite_token_row(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    _mock_invite_repo.consume.return_value = token_row
+    session = AsyncMock()
+
+    with pytest.raises(InviteAcceptError):
+        await auth_service.accept_invite(
+            session, raw_token="expired-token", new_password="a-strong-password"
+        )
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_rejects_a_token_for_a_non_pending_user(
+    _mock_invite_repo,
+) -> None:
+    active_user = _make_user(status=UserStatus.ACTIVE)
+    token_row = _make_invite_token_row(user_id=active_user.id)
+    _mock_invite_repo.consume.return_value = token_row
+    session = _session_returning_user(active_user)
+
+    with pytest.raises(InviteAcceptError):
+        await auth_service.accept_invite(
+            session, raw_token="orphaned-token", new_password="a-strong-password"
+        )
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_rejects_an_orphaned_token_with_no_user(
+    _mock_invite_repo,
+) -> None:
+    token_row = _make_invite_token_row()
+    _mock_invite_repo.consume.return_value = token_row
+    session = _session_returning_user(None)
+
+    with pytest.raises(InviteAcceptError):
+        await auth_service.accept_invite(
+            session, raw_token="orphaned-token", new_password="a-strong-password"
+        )

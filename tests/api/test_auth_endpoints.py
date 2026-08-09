@@ -18,7 +18,7 @@ from app.core.session import get_session
 from app.main import app
 from app.models.enums import UserRole, UserStatus
 from app.services import auth_service
-from app.services.auth_service import AuthenticationError, TokenPair
+from app.services.auth_service import AuthenticationError, InviteAcceptError, TokenPair
 
 
 @pytest.fixture
@@ -127,3 +127,45 @@ def test_me_returns_authenticated_principal(client) -> None:
 def test_me_returns_401_without_a_token(client) -> None:
     response = client.get("/api/v1/auth/me")
     assert response.status_code == 401 or response.status_code == 403
+
+
+def test_accept_invite_returns_token_pair_on_success(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        auth_service,
+        "accept_invite",
+        AsyncMock(return_value=TokenPair(access_token="a.b.c", refresh_token="raw-refresh")),
+    )
+
+    response = client.post(
+        "/api/v1/auth/accept-invite",
+        json={"token": "raw-invite-token", "new_password": "a-strong-password"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["access_token"] == "a.b.c"
+    assert body["refresh_token"] == "raw-refresh"
+
+
+def test_accept_invite_returns_400_on_invalid_token(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        auth_service,
+        "accept_invite",
+        AsyncMock(side_effect=InviteAcceptError("invalid or expired invite token")),
+    )
+
+    response = client.post(
+        "/api/v1/auth/accept-invite",
+        json={"token": "bad-token", "new_password": "a-strong-password"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_accept_invite_rejects_a_password_below_minimum_length(client) -> None:
+    response = client.post(
+        "/api/v1/auth/accept-invite",
+        json={"token": "raw-invite-token", "new_password": "short"},
+    )
+
+    assert response.status_code == 422
