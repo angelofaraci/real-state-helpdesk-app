@@ -13,13 +13,20 @@ shape, not by a runtime check.
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.models.enums import AuthorType
 
 
 class MessageCreate(BaseModel):
     content: str
+
+    @field_validator("content")
+    @classmethod
+    def content_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content must not be blank")
+        return value
 
 
 class MessageResponse(BaseModel):
