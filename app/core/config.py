@@ -34,6 +34,13 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:3000"
 
+    # Consumed once by `python -m app.core.seed` to bootstrap the single
+    # platform-level super-admin (role=admin, organization_id=NULL). There
+    # is no API endpoint that creates a super-admin; this is the only way.
+    super_admin_email: str | None = None
+    super_admin_password: str | None = None
+    super_admin_name: str = "Super Admin"
+
 
 @lru_cache
 def get_settings() -> Settings:
