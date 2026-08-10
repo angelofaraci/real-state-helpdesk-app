@@ -19,6 +19,12 @@ free-form status transitions, which a blanket dependency can't express.
 
 `app.core.exceptions.NotFoundError` is handled globally (see `app.main`),
 so 404 mapping needs no explicit `except` here.
+
+Work Unit 8 extends this router with `/{ticket_id}/messages`
+(`GET`/`POST`), also behind `require_org_member`: a caller who cannot see
+the parent ticket gets the exact same 404 as direct ticket access, via
+`app.services.message_service`'s `TicketRepository.get_or_404` pre-check —
+just reached through a nested route.
 """
 
 from uuid import UUID
@@ -30,9 +36,11 @@ from app.api.deps import require_org_member
 from app.core.scope import OrgScope
 from app.core.session import get_session
 from app.models.enums import TicketStatus
+from app.models.message import Message
 from app.models.ticket import Ticket
+from app.schemas.message import MessageCreate, MessageResponse
 from app.schemas.ticket import TicketCreate, TicketPatch, TicketResponse
-from app.services import ticket_service
+from app.services import message_service, ticket_service
 from app.services.ticket_service import (
     CategoryInactiveError,
     ContractNotActiveError,
@@ -136,3 +144,36 @@ async def update_ticket(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+
+
+@router.get("/{ticket_id}/messages", response_model=list[MessageResponse])
+async def list_messages(
+    ticket_id: UUID,
+    scope: OrgScope = Depends(require_org_member),
+    session: AsyncSession = Depends(get_session),
+) -> list[Message]:
+    """List a ticket's messages, oldest first. A cross-org or
+    role-invisible `ticket_id` is indistinguishable from a missing one and
+    surfaces as 404 (see `app.services.message_service.list_messages`)."""
+    return await message_service.list_messages(session, scope=scope, ticket_id=ticket_id)
+
+
+@router.post(
+    "/{ticket_id}/messages",
+    response_model=MessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_message(
+    ticket_id: UUID,
+    payload: MessageCreate,
+    scope: OrgScope = Depends(require_org_member),
+    session: AsyncSession = Depends(get_session),
+) -> Message:
+    """Post a new message to a ticket's thread. `author_type` is derived
+    server-side from the caller's role (see
+    `app.services.message_service.create_message`) — it is not, and
+    cannot be, a client-settable field on `MessageCreate`. A cross-org or
+    role-invisible `ticket_id` surfaces as 404."""
+    return await message_service.create_message(
+        session, scope=scope, ticket_id=ticket_id, content=payload.content
+    )
