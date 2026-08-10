@@ -97,3 +97,20 @@ async def require_org_staff(principal: User = Depends(get_principal)) -> OrgScop
             detail="staff privileges required",
         )
     return OrgScope.from_principal(principal)
+
+
+async def require_org_member(principal: User = Depends(get_principal)) -> OrgScope:
+    """Require the acting principal to be an org-scoped user of ANY role
+    (tenant/owner/agent/admin), and return their `OrgScope`. Raises 403 only
+    for a super-admin (`organization_id is None`), which has no org scope.
+
+    Used for ticket read access: every role can see tickets, just different
+    subsets — the role-based narrowing happens inside
+    `app.repositories.ticket_repository.TicketRepository.select()`, not here.
+    """
+    if principal.organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="organization membership required",
+        )
+    return OrgScope.from_principal(principal)
