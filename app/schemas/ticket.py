@@ -1,5 +1,4 @@
-"""Pydantic response schema for the read-only ticket endpoints (Work Unit
-7a). Creation/update request schemas land in Work Unit 7b."""
+"""Pydantic request/response schemas for the ticket endpoints."""
 
 from datetime import datetime
 from uuid import UUID
@@ -7,6 +6,30 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.models.enums import TicketChannel, TicketStatus
+
+
+class TicketCreate(BaseModel):
+    """`property_id`/`contract_id` are deliberately non-Optional here even
+    though the `tickets` table columns are nullable: the DB nullability
+    exists for a hypothetical future stage (e.g. a ticket with no linked
+    property), but today's business rule (Rule A) requires both on every
+    ticket created through this endpoint. A missing field is rejected by
+    FastAPI/Pydantic with a 422 before `ticket_service.create_ticket` ever
+    runs."""
+
+    property_id: UUID
+    contract_id: UUID
+    category_id: UUID
+    urgency_id: UUID
+    channel: TicketChannel = TicketChannel.WEB
+
+
+class TicketPatch(BaseModel):
+    """Only `status`/`agent_id` are patchable in stage 1 (Rule B — manual
+    agent assignment, free-form status transitions)."""
+
+    status: TicketStatus | None = None
+    agent_id: UUID | None = None
 
 
 class TicketResponse(BaseModel):

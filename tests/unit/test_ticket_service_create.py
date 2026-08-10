@@ -1,0 +1,312 @@
+"""Unit tests for `app.services.ticket_service.create_ticket` (Work Unit
+7b). Asserts the exact 8-step validation ORDER of Rule A (CONFIRMED
+design) — one test per step, each isolated so a step failure never
+proceeds to a later lookup. `AsyncSession` is mocked, following the
+pattern established by `tests/unit/test_property_service.py`; each
+sequential `get_or_404` call inside `create_ticket` corresponds to one
+`session.execute` call, so `session.execute.side_effect` is used to feed
+back a distinct scalar per step.
+"""
+
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+import pytest
+
+from app.core.exceptions import NotFoundError
+from app.core.scope import OrgScope
+from app.models.category import Category
+from app.models.contract import Contract
+from app.models.enums import ContractStatus, TicketChannel, TicketStatus, UserRole
+from app.models.property import Property
+from app.models.urgency_level import UrgencyLevel
+from app.services import ticket_service
+from app.services.ticket_service import (
+    CategoryInactiveError,
+    ContractNotActiveError,
+    ContractPropertyMismatchError,
+    UrgencyInactiveError,
+)
+
+
+def _scope(**overrides) -> OrgScope:
+    defaults = dict(organization_id=uuid4(), user_id=uuid4(), role=UserRole.ADMIN)
+    defaults.update(overrides)
+    return OrgScope(**defaults)
+
+
+def _property(scope: OrgScope, **overrides) -> Property:
+    defaults = dict(
+        id=uuid4(),
+        organization_id=scope.organization_id,
+        owner_id=uuid4(),
+        address="123 Main St",
+        type="apartment",
+        deleted_at=None,
+    )
+    defaults.update(overrides)
+    return Property(**defaults)
+
+
+def _contract(property_: Property, **overrides) -> Contract:
+    defaults = dict(
+        id=uuid4(),
+        property_id=property_.id,
+        tenant_id=uuid4(),
+        start_date=date(2025, 1, 1),
+        end_date=date(2030, 1, 1),
+        status=ContractStatus.ACTIVE,
+    )
+    defaults.update(overrides)
+    return Contract(**defaults)
+
+
+def _category(scope: OrgScope, **overrides) -> Category:
+    defaults = dict(
+        id=uuid4(),
+        organization_id=scope.organization_id,
+        name="Plumbing",
+        description=None,
+        active=True,
+    )
+    defaults.update(overrides)
+    return Category(**defaults)
+
+
+def _urgency(scope: OrgScope, **overrides) -> UrgencyLevel:
+    defaults = dict(
+        id=uuid4(),
+        organization_id=scope.organization_id,
+        name="High",
+        sla_hours=4,
+        sort_order=0,
+        active=True,
+    )
+    defaults.update(overrides)
+    return UrgencyLevel(**defaults)
+
+
+def _session_returning_sequence(*scalars: object) -> AsyncMock:
+    """An `AsyncSession` whose `execute` returns one scalar per call, in
+    order — modeling the sequential `get_or_404` lookups `create_ticket`
+    performs."""
+    results = []
+    for scalar in scalars:
+        execute_result = MagicMock()
+        execute_result.scalar_one_or_none.return_value = scalar
+        results.append(execute_result)
+    session = AsyncMock()
+    session.execute.side_effect = results
+    return session
+
+
+async def _create(session, scope, **overrides) -> object:
+    fields = dict(
+        property_id=uuid4(),
+        contract_id=uuid4(),
+        category_id=uuid4(),
+        urgency_id=uuid4(),
+        channel=TicketChannel.WEB,
+    )
+    fields.update(overrides)
+    return await ticket_service.create_ticket(session, scope=scope, **fields)
+
+
+@pytest.mark.asyncio
+async def test_step1_missing_property_raises_not_found_without_looking_at_contract() -> None:
+    scope = _scope()
+    session = _session_returning_sequence(None)
+
+    with pytest.raises(NotFoundError):
+        await _create(session, scope)
+
+    assert session.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_step2_missing_contract_raises_not_found() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    session = _session_returning_sequence(property_, None)
+
+    with pytest.raises(NotFoundError):
+        await _create(session, scope, property_id=property_.id)
+
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_step3_contract_property_mismatch_raises_422() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    other_property_id = uuid4()
+    contract = _contract(property_, property_id=other_property_id)
+    session = _session_returning_sequence(property_, contract)
+
+    with pytest.raises(ContractPropertyMismatchError):
+        await _create(session, scope, property_id=property_.id, contract_id=contract.id)
+
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_step4_inactive_contract_raises_422() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_, status=ContractStatus.EXPIRED)
+    session = _session_returning_sequence(property_, contract)
+
+    with pytest.raises(ContractNotActiveError):
+        await _create(session, scope, property_id=property_.id, contract_id=contract.id)
+
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_step5_missing_category_raises_not_found() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_)
+    session = _session_returning_sequence(property_, contract, None)
+
+    with pytest.raises(NotFoundError):
+        await _create(session, scope, property_id=property_.id, contract_id=contract.id)
+
+    assert session.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_step5_inactive_category_raises_422() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_)
+    category = _category(scope, active=False)
+    session = _session_returning_sequence(property_, contract, category)
+
+    with pytest.raises(CategoryInactiveError):
+        await _create(
+            session,
+            scope,
+            property_id=property_.id,
+            contract_id=contract.id,
+            category_id=category.id,
+        )
+
+    assert session.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_step6_missing_urgency_raises_not_found() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_)
+    category = _category(scope)
+    session = _session_returning_sequence(property_, contract, category, None)
+
+    with pytest.raises(NotFoundError):
+        await _create(
+            session,
+            scope,
+            property_id=property_.id,
+            contract_id=contract.id,
+            category_id=category.id,
+        )
+
+    assert session.execute.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_step6_inactive_urgency_raises_422() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_)
+    category = _category(scope)
+    urgency = _urgency(scope, active=False)
+    session = _session_returning_sequence(property_, contract, category, urgency)
+
+    with pytest.raises(UrgencyInactiveError):
+        await _create(
+            session,
+            scope,
+            property_id=property_.id,
+            contract_id=contract.id,
+            category_id=category.id,
+            urgency_id=urgency.id,
+        )
+
+    assert session.execute.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_step7_tenant_not_the_contracts_tenant_raises_not_found() -> None:
+    scope = _scope(role=UserRole.TENANT)
+    property_ = _property(scope)
+    contract = _contract(property_, tenant_id=uuid4())  # not scope.user_id
+    category = _category(scope)
+    urgency = _urgency(scope)
+    session = _session_returning_sequence(property_, contract, category, urgency)
+
+    with pytest.raises(NotFoundError):
+        await _create(
+            session,
+            scope,
+            property_id=property_.id,
+            contract_id=contract.id,
+            category_id=category.id,
+            urgency_id=urgency.id,
+        )
+
+    assert session.execute.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_step7_tenant_who_is_the_contracts_tenant_succeeds() -> None:
+    scope = _scope(role=UserRole.TENANT)
+    property_ = _property(scope)
+    contract = _contract(property_, tenant_id=scope.user_id)
+    category = _category(scope)
+    urgency = _urgency(scope)
+    session = _session_returning_sequence(property_, contract, category, urgency)
+
+    ticket = await _create(
+        session,
+        scope,
+        property_id=property_.id,
+        contract_id=contract.id,
+        category_id=category.id,
+        urgency_id=urgency.id,
+    )
+
+    assert ticket.user_id == scope.user_id
+
+
+@pytest.mark.asyncio
+async def test_step8_success_computes_sla_due_at_and_defaults() -> None:
+    scope = _scope(role=UserRole.OWNER)
+    property_ = _property(scope)
+    contract = _contract(property_)
+    category = _category(scope)
+    urgency = _urgency(scope, sla_hours=8)
+    session = _session_returning_sequence(property_, contract, category, urgency)
+
+    before = datetime.now(UTC)
+    ticket = await _create(
+        session,
+        scope,
+        property_id=property_.id,
+        contract_id=contract.id,
+        category_id=category.id,
+        urgency_id=urgency.id,
+    )
+    after = datetime.now(UTC)
+
+    assert ticket.status == TicketStatus.OPEN
+    assert ticket.agent_id is None
+    assert ticket.user_id == scope.user_id
+    assert ticket.property_id == property_.id
+    assert ticket.contract_id == contract.id
+    assert ticket.category_id == category.id
+    assert ticket.urgency_id == urgency.id
+    assert before + timedelta(hours=8) <= ticket.sla_due_at <= after + timedelta(hours=8)
+    session.flush.assert_awaited_once()
