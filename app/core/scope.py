@@ -9,7 +9,7 @@ deliberately no way to construct an `OrgScope` for a super-admin principal
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
 from app.core.exceptions import SuperAdminCannotAccessOrgDataError
@@ -17,6 +17,15 @@ from app.models.enums import UserRole
 
 if TYPE_CHECKING:
     from app.models.user import User
+
+
+# Sentinel `user_id` for scopes constructed on behalf of a background
+# worker (e.g. the async classification worker), which has no authenticated
+# request principal. This is NOT a real user: it must NEVER be written to
+# any FK column that references `users.id` (e.g. `tickets.agent_id`,
+# `messages` authorship). It exists solely to satisfy `OrgScope.user_id`'s
+# non-Optional shape for audit/logging purposes in worker contexts.
+SYSTEM_ACTOR_ID: Final[UUID] = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,3 +67,16 @@ class OrgScope:
         `actor.organization_id` is never read.
         """
         return cls(organization_id=organization_id, user_id=actor.id, role=UserRole.ADMIN)
+
+    @classmethod
+    def for_background_worker(cls, organization_id: UUID) -> OrgScope:
+        """Build a scope for background/worker contexts (e.g. the async
+        classification worker), which have no authenticated request
+        principal. Uses the `SYSTEM_ACTOR_ID` sentinel as `user_id` — never
+        a real user — with admin-level role for unrestricted org access.
+        """
+        return cls(
+            organization_id=organization_id,
+            user_id=SYSTEM_ACTOR_ID,
+            role=UserRole.ADMIN,
+        )

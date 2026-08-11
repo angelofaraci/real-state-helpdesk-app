@@ -2,7 +2,16 @@
 
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, String, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Double,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +32,8 @@ class Classification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Boolean, nullable=False, server_default=text("false")
     )
     model_used: Mapped[str | None] = mapped_column(String, nullable=True)
+    predicted_urgency: Mapped[str | None] = mapped_column(String, nullable=True)
+    urgency_confidence: Mapped[float | None] = mapped_column(Double, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -32,6 +43,10 @@ class Classification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "model_used IS NULL OR model_used IN ('sklearn_v1', 'llm_fallback')",
             name="ck_classifications_model_used_known",
+        ),
+        CheckConstraint(
+            "urgency_confidence IS NULL OR (urgency_confidence BETWEEN 0 AND 1)",
+            name="ck_classifications_urgency_confidence_range",
         ),
         Index("ix_classifications_ticket_id_unique", "ticket_id", unique=True),
     )
