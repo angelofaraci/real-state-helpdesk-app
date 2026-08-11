@@ -47,3 +47,14 @@ class OrgScope:
             user_id=user.id,
             role=user.role,
         )
+
+    @classmethod
+    def for_new_organization(cls, organization_id: UUID, *, actor: User) -> OrgScope:
+        """The ONLY sanctioned way to obtain a scope without an org-scoped
+        principal. Reserved for seeding the default taxonomy of an
+        organization just created and flushed by a super-admin (whose own
+        `organization_id` is None, so `from_principal` cannot apply).
+        `organization_id` MUST be that just-flushed org's id;
+        `actor.organization_id` is never read.
+        """
+        return cls(organization_id=organization_id, user_id=actor.id, role=UserRole.ADMIN)
