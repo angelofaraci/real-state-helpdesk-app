@@ -37,6 +37,21 @@ def _session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency yielding a request-scoped `AsyncSession`."""
+    """FastAPI dependency yielding a request-scoped `AsyncSession`.
+
+    Commits the session once the request handler returns without raising,
+    so writes made through this dependency are durable. If the handler
+    raises an `Exception`, the session is rolled back instead and the
+    exception is re-raised untouched. `GeneratorExit` (raised by `aclose()`
+    on client disconnect/cancellation) is intentionally NOT caught here —
+    only `Exception` subtypes are — so cancellation propagates uncaught
+    instead of being mistaken for an application error.
+    """
     async with _session_factory()() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()
