@@ -93,3 +93,37 @@ def test_classifications_ticket_id_is_unique() -> None:
     assert any(
         {c.name for c in ix.columns} == {"ticket_id"} for ix in unique_indexes
     ), "classifications must have a unique index on ticket_id"
+
+
+def test_tickets_classification_status_column_matches_migration_0002() -> None:
+    tickets = Base.metadata.tables["tickets"]
+    column = tickets.columns["classification_status"]
+
+    assert column.nullable is False
+    assert column.type.enums == ["pending", "classified"]
+    assert column.type.name == "classification_status"
+
+    index_names_and_columns = [
+        ({c.name for c in ix.columns}, ix.name) for ix in tickets.indexes
+    ]
+    assert (
+        {"organization_id", "classification_status"},
+        "ix_tickets_organization_id_classification_status",
+    ) in index_names_and_columns
+
+
+def test_classifications_model_used_column_matches_migration_0002() -> None:
+    classifications = Base.metadata.tables["classifications"]
+    column = classifications.columns["model_used"]
+
+    assert column.nullable is True
+    assert isinstance(column.type, type(classifications.columns["predicted_category"].type))
+
+    check_sqltexts = {
+        str(c.sqltext)
+        for c in classifications.constraints
+        if c.__class__.__name__ == "CheckConstraint"
+    }
+    assert any("model_used" in text for text in check_sqltexts)
+    assert any("sklearn_v1" in text for text in check_sqltexts)
+    assert any("llm_fallback" in text for text in check_sqltexts)

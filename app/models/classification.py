@@ -22,11 +22,16 @@ class Classification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     human_corrected: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    model_used: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
             "confidence IS NULL OR (confidence BETWEEN 0 AND 1)",
             name="ck_classifications_confidence_range",
+        ),
+        CheckConstraint(
+            "model_used IS NULL OR model_used IN ('sklearn_v1', 'llm_fallback')",
+            name="ck_classifications_model_used_known",
         ),
         Index("ix_classifications_ticket_id_unique", "ticket_id", unique=True),
     )
