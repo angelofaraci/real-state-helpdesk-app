@@ -16,7 +16,13 @@ from app.api import deps
 from app.core.exceptions import NotFoundError as CoreNotFoundError
 from app.core.session import get_session
 from app.main import app
-from app.models.enums import TicketChannel, TicketStatus, UserRole, UserStatus
+from app.models.enums import (
+    ClassificationStatus,
+    TicketChannel,
+    TicketStatus,
+    UserRole,
+    UserStatus,
+)
 from app.models.ticket import Ticket
 from app.services import ticket_service
 from app.services.ticket_service import (
@@ -55,7 +61,9 @@ def client():
     app.dependency_overrides.clear()
 
 
-def _make_ticket(principal) -> Ticket:
+def _make_ticket(
+    principal, classification_status=ClassificationStatus.PENDING
+) -> Ticket:
     ticket = Ticket(
         organization_id=principal.organization_id,
         user_id=uuid4(),
@@ -65,6 +73,7 @@ def _make_ticket(principal) -> Ticket:
         urgency_id=uuid4(),
         channel=TicketChannel.WEB,
         status=TicketStatus.OPEN,
+        classification_status=classification_status,
         agent_id=None,
         sla_due_at=datetime.now(UTC) + timedelta(hours=4),
         closed_at=None,
@@ -99,6 +108,20 @@ def test_list_tickets_rejects_a_super_admin_with_403(client) -> None:
     assert response.status_code == 403
 
 
+def test_list_tickets_includes_classification_status(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.AGENT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    ticket = _make_ticket(principal, classification_status=ClassificationStatus.CLASSIFIED)
+    monkeypatch.setattr(
+        ticket_service, "list_tickets", AsyncMock(return_value=[ticket])
+    )
+
+    response = client.get("/api/v1/tickets")
+
+    assert response.status_code == 200
+    assert response.json()[0]["classification_status"] == "classified"
+
+
 def test_list_tickets_forwards_query_filters(client, monkeypatch) -> None:
     principal = _fake_principal()
     app.dependency_overrides[deps.get_principal] = lambda: principal
@@ -126,6 +149,18 @@ def test_get_ticket_returns_200(client, monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == str(target.id)
+
+
+def test_get_ticket_includes_classification_status(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.TENANT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _make_ticket(principal, classification_status=ClassificationStatus.CLASSIFIED)
+    monkeypatch.setattr(ticket_service, "get_ticket", AsyncMock(return_value=target))
+
+    response = client.get(f"/api/v1/tickets/{target.id}")
+
+    assert response.status_code == 200
+    assert response.json()["classification_status"] == "classified"
 
 
 def test_get_ticket_maps_not_found_to_404(client, monkeypatch) -> None:
@@ -172,6 +207,58 @@ def test_create_ticket_returns_201(client, monkeypatch) -> None:
 
     assert response.status_code == 201
     assert response.json()["id"] == str(created.id)
+
+
+def test_create_ticket_with_explicit_category_id_returns_pending(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.TENANT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    created = _make_ticket(principal, classification_status=ClassificationStatus.PENDING)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock(return_value=created))
+
+    response = client.post("/api/v1/tickets", json=_create_payload())
+
+    assert response.status_code == 201
+    assert response.json()["classification_status"] == "pending"
+
+
+def test_create_ticket_ignores_classification_status_in_payload(client, monkeypatch) -> None:
+    """`classification_status` is read-only: it is not a field on
+    `TicketCreate`, so even if a caller sends it in the request body it is
+    silently dropped and never forwarded to `ticket_service.create_ticket`."""
+    principal = _fake_principal(role=UserRole.TENANT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    created = _make_ticket(principal, classification_status=ClassificationStatus.PENDING)
+    mocked = AsyncMock(return_value=created)
+    monkeypatch.setattr(ticket_service, "create_ticket", mocked)
+
+    response = client.post(
+        "/api/v1/tickets",
+        json=_create_payload(classification_status="classified"),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["classification_status"] == "pending"
+    _, kwargs = mocked.call_args
+    assert "classification_status" not in kwargs
+
+
+def test_update_ticket_ignores_classification_status_in_payload(client, monkeypatch) -> None:
+    """`classification_status` is not a field on `TicketPatch` either — a
+    PATCH body attempting to set it is silently dropped."""
+    principal = _fake_principal(role=UserRole.AGENT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _make_ticket(principal, classification_status=ClassificationStatus.PENDING)
+    mocked = AsyncMock(return_value=target)
+    monkeypatch.setattr(ticket_service, "update_ticket", mocked)
+
+    response = client.patch(
+        f"/api/v1/tickets/{target.id}",
+        json={"status": "resolved", "classification_status": "classified"},
+    )
+
+    assert response.status_code == 200
+    _, kwargs = mocked.call_args
+    assert "classification_status" not in kwargs
 
 
 def test_create_ticket_requires_property_id_and_contract_id(client) -> None:

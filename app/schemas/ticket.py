@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.enums import TicketChannel, TicketStatus
+from app.models.enums import ClassificationStatus, TicketChannel, TicketStatus
 
 
 class TicketCreate(BaseModel):
@@ -42,6 +42,7 @@ class TicketResponse(BaseModel):
     urgency_id: UUID
     channel: TicketChannel
     status: TicketStatus
+    classification_status: ClassificationStatus
     agent_id: UUID | None
     sla_due_at: datetime
     created_at: datetime
