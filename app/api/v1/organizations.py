@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_super_admin
 from app.core.session import get_session
 from app.models.organization import Organization
+from app.models.user import User
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationResponse,
@@ -32,9 +33,12 @@ router = APIRouter(
 async def create_organization(
     payload: OrganizationCreate,
     session: AsyncSession = Depends(get_session),
+    principal: User = Depends(require_super_admin),
 ) -> Organization:
     try:
-        return await organization_service.create_organization(session, name=payload.name)
+        return await organization_service.create_organization(
+            session, name=payload.name, actor=principal
+        )
     except ConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

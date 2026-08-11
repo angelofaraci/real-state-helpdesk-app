@@ -51,3 +51,18 @@ def test_org_scope_is_frozen() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         scope.organization_id = uuid4()  # type: ignore[misc]
+
+
+def test_for_new_organization() -> None:
+    """The one sanctioned bypass of `from_principal`: builds a scope for a
+    just-flushed organization using a super-admin actor whose own
+    `organization_id` is None. The actor's `organization_id` must never be
+    read — only `actor.id` and the explicitly passed `organization_id`."""
+    new_org_id = uuid4()
+    actor = _make_user(organization_id=None, role=UserRole.ADMIN)
+
+    scope = OrgScope.for_new_organization(new_org_id, actor=actor)
+
+    assert scope.organization_id == new_org_id
+    assert scope.user_id == actor.id
+    assert scope.role == UserRole.ADMIN
