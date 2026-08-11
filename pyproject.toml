@@ -24,6 +24,8 @@ dependencies = [
     "aiosmtplib==3.0.2",
     "pgvector==0.3.6",
     "psycopg[binary]==3.3.4",
+    "joblib==1.5.3",
+    "openai==2.54.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +34,9 @@ dev = [
     "pytest-asyncio==0.25.2",
     "pytest-cov==6.0.0",
     "httpx==0.28.1",
+]
+ml = [
+    "sentence-transformers==3.4.1",
 ]
 
 [tool.hatch.build.targets.wheel]
