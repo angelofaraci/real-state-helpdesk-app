@@ -79,4 +79,16 @@ class TicketResponse(BaseModel):
     created_at: datetime
     closed_at: datetime | None
 
+    # Classification metadata (stage 2, PR5) — populated from the ticket's
+    # `classifications` row (see `ticket_service.get_ticket`), and visible
+    # only to agent/admin roles: the API router nulls these out for
+    # tenant/owner before returning the response (see
+    # `app.api.v1.tickets.get_ticket`). Absent entirely for a ticket that
+    # has never been classified (worker or human).
+    predicted_category: str | None = None
+    confidence: float | None = None
+    predicted_urgency: str | None = None
+    urgency_confidence: float | None = None
+    model_used: str | None = None
+
     model_config = {"from_attributes": True}

@@ -29,13 +29,13 @@ just reached through a nested route.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_org_member
 from app.core.scope import OrgScope
 from app.core.session import get_session
-from app.models.enums import TicketStatus
+from app.models.enums import ClassificationStatus, TicketStatus, UserRole
 from app.models.message import Message
 from app.models.ticket import Ticket
 from app.schemas.message import MessageCreate, MessageResponse
@@ -49,8 +49,14 @@ from app.services.ticket_service import (
     InvalidAgentError,
     UrgencyInactiveError,
 )
+from app.workers.classification import enqueue_classification
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
+
+# Roles that may see a ticket's classification metadata (predicted
+# category/urgency, confidence, model_used) on `GET /tickets/:id` — see
+# `get_ticket` below. Mirrors `ticket_service._STAFF_ROLES`.
+_STAFF_ROLES = (UserRole.AGENT, UserRole.ADMIN)
 
 
 @router.get("", response_model=list[TicketResponse])
@@ -81,16 +87,31 @@ async def get_ticket(
     ticket_id: UUID,
     scope: OrgScope = Depends(require_org_member),
     session: AsyncSession = Depends(get_session),
-) -> Ticket:
+) -> TicketResponse:
     """Fetch a single ticket visible to the caller (org + role). A
     cross-org or role-invisible id is indistinguishable from a missing one
-    and surfaces as 404."""
-    return await ticket_service.get_ticket(session, scope=scope, ticket_id=ticket_id)
+    and surfaces as 404.
+
+    Classification metadata (predicted category/urgency, confidence,
+    model_used — see `ticket_service.get_ticket`) is visible only to
+    agent/admin roles; a tenant/owner sees these fields as `null`, matching
+    the fact that they never see the raw AI prediction, only the resolved
+    `category_id`/`urgency_id` once classified."""
+    ticket = await ticket_service.get_ticket(session, scope=scope, ticket_id=ticket_id)
+    response = TicketResponse.model_validate(ticket)
+    if scope.role not in _STAFF_ROLES:
+        response.predicted_category = None
+        response.confidence = None
+        response.predicted_urgency = None
+        response.urgency_confidence = None
+        response.model_used = None
+    return response
 
 
 @router.post("", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
 async def create_ticket(
     payload: TicketCreate,
+    background_tasks: BackgroundTasks,
     scope: OrgScope = Depends(require_org_member),
     session: AsyncSession = Depends(get_session),
 ) -> Ticket:
@@ -99,13 +120,32 @@ async def create_ticket(
     exact 8-step validation order; a missing/cross-org property, contract,
     category, or urgency (as well as a tenant referencing a contract that
     isn't theirs) surfaces as 404, and a business-rule violation on an
-    otherwise-visible resource surfaces as 422."""
+    otherwise-visible resource surfaces as 422.
+
+    When `category_id`/`urgency_id` are omitted, the created ticket ends up
+    `classification_status="pending"`; a `classify_ticket` job is then
+    enqueued via `BackgroundTasks` (runs after the response is sent) so the
+    async worker picks it up. Supplying both upfront skips this entirely —
+    nothing is enqueued."""
+    ticket = await _create_ticket_or_422(session, scope, payload)
+
+    if ticket.classification_status == ClassificationStatus.PENDING:
+        background_tasks.add_task(enqueue_classification, ticket.id, ticket.organization_id)
+
+    return ticket
+
+
+async def _create_ticket_or_422(
+    session: AsyncSession, scope: OrgScope, payload: TicketCreate
+) -> Ticket:
     try:
         return await ticket_service.create_ticket(
             session,
             scope=scope,
             property_id=payload.property_id,
             contract_id=payload.contract_id,
+            title=payload.title,
+            description=payload.description,
             category_id=payload.category_id,
             urgency_id=payload.urgency_id,
             channel=payload.channel,

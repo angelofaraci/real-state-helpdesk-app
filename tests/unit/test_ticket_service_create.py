@@ -18,7 +18,13 @@ from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
 from app.models.category import Category
 from app.models.contract import Contract
-from app.models.enums import ContractStatus, TicketChannel, TicketStatus, UserRole
+from app.models.enums import (
+    ClassificationStatus,
+    ContractStatus,
+    TicketChannel,
+    TicketStatus,
+    UserRole,
+)
 from app.models.property import Property
 from app.models.urgency_level import UrgencyLevel
 from app.services import ticket_service
@@ -105,6 +111,7 @@ async def _create(session, scope, **overrides) -> object:
     fields = dict(
         property_id=uuid4(),
         contract_id=uuid4(),
+        title="Leaking faucet",
         category_id=uuid4(),
         urgency_id=uuid4(),
         channel=TicketChannel.WEB,
@@ -310,3 +317,88 @@ async def test_step8_success_computes_sla_due_at_and_defaults() -> None:
     assert ticket.urgency_id == urgency.id
     assert before + timedelta(hours=8) <= ticket.sla_due_at <= after + timedelta(hours=8)
     session.flush.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 — optional taxonomy at creation (PR5): omitting category_id/
+# urgency_id skips Rule A's taxonomy-lookup+SLA steps entirely and leaves
+# the ticket `classification_status="pending"` for the async worker to pick
+# up later.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_without_taxonomy_skips_taxonomy_lookups_and_sets_pending() -> None:
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_)
+    session = _session_returning_sequence(property_, contract)
+
+    ticket = await _create(
+        session,
+        scope,
+        property_id=property_.id,
+        contract_id=contract.id,
+        category_id=None,
+        urgency_id=None,
+    )
+
+    assert ticket.category_id is None
+    assert ticket.urgency_id is None
+    assert ticket.sla_due_at is None
+    assert ticket.classification_status == ClassificationStatus.PENDING
+    assert ticket.title == "Leaking faucet"
+    # Only the property + contract lookups happened — no category/urgency
+    # queries were issued, since both were omitted.
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_without_taxonomy_still_enforces_contract_active_check() -> None:
+    """Steps 1-4 of Rule A (property/contract resolution + contract-active
+    check) still run even when taxonomy is omitted — only the
+    category/urgency/SLA steps (5, 6, 8) are skipped."""
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_, status=ContractStatus.EXPIRED)
+    session = _session_returning_sequence(property_, contract)
+
+    from app.services.ticket_service import ContractNotActiveError
+
+    with pytest.raises(ContractNotActiveError):
+        await _create(
+            session,
+            scope,
+            property_id=property_.id,
+            contract_id=contract.id,
+            category_id=None,
+            urgency_id=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_with_both_taxonomy_ids_still_computes_sla_synchronously() -> None:
+    """Regression: supplying both `category_id`/`urgency_id` upfront keeps
+    Rule A's synchronous taxonomy validation + SLA computation exactly as
+    before (see also `test_step8_success_computes_sla_due_at_and_defaults`,
+    which already covers this path in full)."""
+    scope = _scope()
+    property_ = _property(scope)
+    contract = _contract(property_)
+    category = _category(scope)
+    urgency = _urgency(scope, sla_hours=6)
+    session = _session_returning_sequence(property_, contract, category, urgency)
+
+    ticket = await _create(
+        session,
+        scope,
+        property_id=property_.id,
+        contract_id=contract.id,
+        category_id=category.id,
+        urgency_id=urgency.id,
+    )
+
+    assert ticket.category_id == category.id
+    assert ticket.urgency_id == urgency.id
+    assert ticket.sla_due_at is not None
+    assert session.execute.await_count == 4

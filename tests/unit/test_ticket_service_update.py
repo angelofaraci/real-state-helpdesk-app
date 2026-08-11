@@ -4,7 +4,7 @@ restriction). `AsyncSession` is mocked, following the pattern established
 by `tests/unit/test_property_service.py`.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -14,6 +14,7 @@ from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
 from app.models.enums import TicketStatus, UserRole
 from app.models.ticket import Ticket
+from app.models.urgency_level import UrgencyLevel
 from app.models.user import User
 from app.services import ticket_service
 from app.services.ticket_service import ForbiddenError, InvalidAgentError
@@ -55,6 +56,19 @@ def _user(scope: OrgScope, **overrides) -> User:
     )
     defaults.update(overrides)
     return User(**defaults)
+
+
+def _urgency(scope: OrgScope, **overrides) -> UrgencyLevel:
+    defaults = dict(
+        id=uuid4(),
+        organization_id=scope.organization_id,
+        name="High",
+        sla_hours=4,
+        sort_order=0,
+        active=True,
+    )
+    defaults.update(overrides)
+    return UrgencyLevel(**defaults)
 
 
 def _session_returning_sequence(*scalars: object) -> AsyncMock:
@@ -199,3 +213,87 @@ async def test_setting_a_non_closed_status_clears_closed_at() -> None:
 
     assert updated.status == TicketStatus.IN_PROGRESS
     assert updated.closed_at is None
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 — recategorization (PR5): an agent/admin correcting `category_id`/
+# `urgency_id` flags the existing `classifications` row as human-corrected
+# and recomputes `sla_due_at` anchored on `ticket.created_at` (matching the
+# worker's SLA-anchor convention), NOT `datetime.now()`. A tenant/owner may
+# never set these fields via update.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recategorizing_by_non_staff_role_is_forbidden_before_any_lookup() -> None:
+    scope = _scope(role=UserRole.TENANT)
+    session = _session_returning_sequence()
+
+    with pytest.raises(ForbiddenError):
+        await ticket_service.update_ticket(
+            session, scope=scope, ticket_id=uuid4(), category_id=uuid4()
+        )
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recategorizing_urgency_only_by_owner_is_forbidden_before_any_lookup() -> None:
+    scope = _scope(role=UserRole.OWNER)
+    session = _session_returning_sequence()
+
+    with pytest.raises(ForbiddenError):
+        await ticket_service.update_ticket(
+            session, scope=scope, ticket_id=uuid4(), urgency_id=uuid4()
+        )
+
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_updating_category_and_urgency_marks_human_corrected_and_recomputes_sla() -> None:
+    scope = _scope(role=UserRole.AGENT)
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    target = _ticket(scope, created_at=created_at)
+    new_urgency = _urgency(scope, sla_hours=12)
+    new_category_id = uuid4()
+    session = _session_returning_sequence(target, new_urgency, None, target)
+
+    updated = await ticket_service.update_ticket(
+        session,
+        scope=scope,
+        ticket_id=target.id,
+        category_id=new_category_id,
+        urgency_id=new_urgency.id,
+    )
+
+    assert updated.category_id == new_category_id
+    assert updated.urgency_id == new_urgency.id
+    assert updated.sla_due_at == created_at + timedelta(hours=12)
+
+    # The 3rd execute call is `ClassificationRepository.mark_human_corrected`.
+    mark_call = session.execute.call_args_list[2]
+    (stmt,), _ = mark_call
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "UPDATE classifications" in sql
+    assert "human_corrected=true" in sql or "human_corrected = true" in sql
+    assert target.id.hex in sql
+
+
+@pytest.mark.asyncio
+async def test_updating_category_only_reuses_the_tickets_existing_urgency_for_sla() -> None:
+    scope = _scope(role=UserRole.ADMIN)
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    existing_urgency_id = uuid4()
+    target = _ticket(scope, created_at=created_at, urgency_id=existing_urgency_id)
+    existing_urgency = _urgency(scope, id=existing_urgency_id, sla_hours=2)
+    new_category_id = uuid4()
+    session = _session_returning_sequence(target, existing_urgency, None, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, category_id=new_category_id
+    )
+
+    assert updated.category_id == new_category_id
+    assert updated.urgency_id == existing_urgency_id
+    assert updated.sla_due_at == created_at + timedelta(hours=2)
