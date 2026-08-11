@@ -65,3 +65,10 @@ class AuthorType(str, Enum):
     USER = "user"
     AGENT = "agent"
     BOT = "bot"
+
+
+class ClassificationStatus(str, Enum):
+    """Maps to the Postgres enum type `classification_status`."""
+
+    PENDING = "pending"
+    CLASSIFIED = "classified"

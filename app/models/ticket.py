@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import TicketChannel, TicketStatus
+from app.models.enums import ClassificationStatus, TicketChannel, TicketStatus
 
 
 class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -65,6 +65,15 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         server_default=TicketStatus.OPEN.value,
     )
+    classification_status: Mapped[ClassificationStatus] = mapped_column(
+        SAEnum(
+            ClassificationStatus,
+            name="classification_status",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        server_default=ClassificationStatus.PENDING.value,
+    )
     agent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -95,4 +104,9 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
         Index("ix_tickets_category_id", "category_id"),
         Index("ix_tickets_urgency_id", "urgency_id"),
+        Index(
+            "ix_tickets_organization_id_classification_status",
+            "organization_id",
+            "classification_status",
+        ),
     )
