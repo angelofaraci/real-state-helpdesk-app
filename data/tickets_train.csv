@@ -1,0 +1,91 @@
+title,description,category,urgency
+Inundacion en el departamento,"Se rompio un caño y el agua esta entrando al dormitorio, necesito que vengan ya. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Maintenance,Critical
+Se corto el gas en todo el edificio,"No hay gas en ningun departamento del edificio, parece un problema en la clave general. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Maintenance,Critical
+Ascensor atascado con gente adentro,"El ascensor se detuvo entre pisos y hay dos personas encerradas, es una emergencia. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Maintenance,Critical
+Olor fuerte a gas en el pasillo,"Se siente olor a gas en el pasillo del tercer piso, tengo miedo de que sea una fuga. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Maintenance,Critical
+Se corto la luz del departamento,"Se fue la luz de mi depto hace dos horas y no vuelve, el resto del edificio tiene. Es urgente, necesito que lo resuelvan hoy mismo.",Maintenance,High
+Pierde agua el termotanque,"El termotanque esta perdiendo agua por abajo y se esta formando un charco. Es urgente, necesito que lo resuelvan hoy mismo.",Maintenance,High
+Se rompio la cerradura de entrada,"La cerradura de la puerta principal del edificio se rompio y queda sin trabar. Es urgente, necesito que lo resuelvan hoy mismo.",Maintenance,High
+No enciende la caldera,"La caldera no prende desde ayer y hace bastante frio en el departamento. Es urgente, necesito que lo resuelvan hoy mismo.",Maintenance,High
+Canilla de cocina gotea,"Hace una semana que la canilla de la cocina gotea, no es grave pero desperdicia agua. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Maintenance,Medium
+El aire acondicionado no enfria bien,"El split del living funciona pero no enfria como antes, capaz necesita una recarga. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Maintenance,Medium
+Humedad en el techo del baño,"Aparecio una mancha de humedad en el techo del baño, va creciendo de a poco. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Maintenance,Medium
+Ventana que no cierra del todo,"La ventana del dormitorio queda con una rendija y entra frio, habria que ajustarla. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Maintenance,Medium
+Persiana dificil de subir,"La persiana del dormitorio cuesta bastante subirla, capaz hay que aceitar el mecanismo. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Maintenance,Low
+Portero electrico suena bajito,"El portero electrico se escucha muy bajo, se podria revisar el volumen. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Maintenance,Low
+Pintura descascarada en el pasillo,"La pintura del pasillo del segundo piso esta descascarada, no es urgente pero queda feo. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Maintenance,Low
+Me cobraron el alquiler dos veces,"Me debitaron el alquiler dos veces este mes y me quede sin fondos para otros pagos. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Billing,Critical
+Corte de servicios por error de pago,"Me avisaron que cortan el gas por falta de pago pero yo ya transferi hace dias. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Billing,Critical
+Deuda que no es mia aparecio en mi cuenta,"Me llego un reclamo por una deuda de expensas que no me corresponde, necesito que lo resuelvan hoy. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Billing,Critical
+Rechazo de pago justo antes del vencimiento,"El sistema de pago rechaza mi tarjeta y hoy vence el plazo, se me va a generar un recargo. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Billing,Critical
+No llego la factura de expensas,"No me llego la factura de expensas de este mes y el vencimiento es en dos dias. Es urgente, necesito que lo resuelvan hoy mismo.",Billing,High
+Aviso de mora por error,"Me llego un aviso de mora pero yo pague la semana pasada, necesito que lo corrijan pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Billing,High
+Vencimiento hoy y no puedo pagar online,"Quiero pagar el alquiler online pero la plataforma da error, el vencimiento es hoy. Es urgente, necesito que lo resuelvan hoy mismo.",Billing,High
+Cobro duplicado de expensas extraordinarias,"Me cobraron dos veces la expensa extraordinaria de este mes, necesito que me devuelvan la diferencia pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Billing,High
+Consulta por aumento en expensas,"Quisiera saber por que el monto de expensas subio este mes respecto al anterior. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Billing,Medium
+Cargo extra sin explicacion,"En la ultima liquidacion aparece un cargo extra que no entiendo de que se trata. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Billing,Medium
+Cambio de fecha de vencimiento,"Seria posible cambiar la fecha de vencimiento del alquiler para mas adelante en el mes. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Billing,Medium
+Necesito comprobante de pago,"Necesito el comprobante de pago del mes pasado para presentarle a mi contador. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Billing,Medium
+Consulta sobre transferencia de otro banco,"Queria saber si aceptan que pague por transferencia desde una cuenta de otro banco. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Billing,Low
+Baja de debito automatico,"Como hago para dar de baja el debito automatico del alquiler. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Billing,Low
+Factura por mail en vez de papel,"Me gustaria recibir la factura por mail en lugar de que me la traigan en papel. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Billing,Low
+Amenaza de desalojo sin aviso,"Me quieren desalojar sin el aviso previo que indica el contrato, necesito asesoramiento urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Contract,Critical
+Vencimiento de contrato hoy sin renovacion firmada,"El contrato vence hoy y todavia no me confirmaron si lo renuevan, quedo en la calle. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Contract,Critical
+Rescision unilateral sin causa,"Me notificaron una rescision del contrato sin causa aparente, necesito una respuesta hoy. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Contract,Critical
+Bloqueo de acceso por disputa de contrato,"Me cambiaron la cerradura por una disputa del contrato y no puedo entrar a mi vivienda. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Contract,Critical
+Contrato vence en una semana,"El contrato vence en una semana y todavia no me dijeron si lo van a renovar. Es urgente, necesito que lo resuelvan hoy mismo.",Contract,High
+Necesito la renovacion firmada urgente,"Necesito la renovacion firmada antes del viernes porque se vence el contrato actual. Es urgente, necesito que lo resuelvan hoy mismo.",Contract,High
+Cambio de condiciones antes del vencimiento,"Me avisaron un cambio de condiciones justo antes del vencimiento y necesito definir pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Contract,High
+Falta la firma del garante para renovar,"Falta la firma del garante para renovar el contrato y el plazo se vence en pocos dias. Es urgente, necesito que lo resuelvan hoy mismo.",Contract,High
+Consulta sobre clausula de rescision,"Quiero consultar la clausula de rescision anticipada del contrato. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Contract,Medium
+Agregar cotitular al contrato,"Puedo agregar a mi pareja como cotitular en el contrato de alquiler. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Contract,Medium
+Actualizacion del valor del alquiler,"Necesito saber como se actualiza el valor del alquiler segun lo que dice el contrato. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Contract,Medium
+Copia del contrato firmado,"Quisiera pedir una copia del contrato firmado porque no la tengo a mano. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Contract,Medium
+Plazo de aviso de no renovacion,"Cuanto tiempo antes hay que avisar si no se va a renovar el contrato. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Contract,Low
+Devolucion del deposito de garantia,"Consulta sobre el deposito de garantia y como se devuelve al finalizar el contrato. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Contract,Low
+Clausula sobre mascotas,"Tengo dudas sobre la clausula de mascotas que figura en el contrato. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Contract,Low
+Certificado urgente para tramite legal,"Necesito el certificado de domicilio hoy mismo porque tengo un tramite legal que vence. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Administrative,Critical
+Documentacion urgente para escritura,"Necesito la documentacion para la escritura hoy porque el escribano me esta esperando. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Administrative,Critical
+Constancia urgente para el banco,"Necesito la constancia de titularidad antes de las 12 porque el banco cierra el tramite hoy. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Administrative,Critical
+Falta de documentacion bloquea mudanza de hoy,"No tengo el certificado que piden para la mudanza de hoy, necesito que me lo generen ya. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Administrative,Critical
+Recibo de sueldo actualizado urgente,"Piden el recibo de sueldo actualizado para renovar el contrato y todavia no me lo generaron. Es urgente, necesito que lo resuelvan hoy mismo.",Administrative,High
+Constancia de ingresos para el garante,"Necesito la certificacion de ingresos que se usa para el garante antes de mañana. Es urgente, necesito que lo resuelvan hoy mismo.",Administrative,High
+Cambio de titular de servicios pronto,"Quisiera cambiar el titular de los servicios a mi nombre lo antes posible. Es urgente, necesito que lo resuelvan hoy mismo.",Administrative,High
+Actualizacion urgente de datos para notificacion legal,"Necesito actualizar mis datos de contacto porque me llego una notificacion legal a la direccion vieja. Es urgente, necesito que lo resuelvan hoy mismo.",Administrative,High
+Duplicado del reglamento de copropiedad,"Quiero pedir un duplicado del reglamento de copropiedad del edificio. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Administrative,Medium
+Actualizar datos de contacto,"Necesito que me actualicen mis datos de contacto en el sistema de la administracion. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Administrative,Medium
+Certificacion de ingresos,"Podrian enviarme la certificacion de ingresos que se usa para el garante. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Administrative,Medium
+Cambio de titular de servicios,"Quisiera cambiar el titular de los servicios a mi nombre. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Administrative,Medium
+Retiro de certificado de libre deuda,"Donde puedo retirar el certificado de libre deuda del departamento. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Administrative,Low
+Copia del reglamento interno,"Necesito una copia del reglamento interno del edificio para leerlo con calma. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Administrative,Low
+Horarios de atencion de administracion,"Queria saber los horarios de atencion de la administracion. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Administrative,Low
+Amenazas de un vecino,"Un vecino amenazo a mi familia en el palier, tengo miedo y necesito que actuen ya. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Complaints,Critical
+Pelea violenta en el pasillo,"Hay una pelea violenta en el pasillo del edificio en este momento, necesito ayuda urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Complaints,Critical
+Fiesta descontrolada con golpes en la puerta,"El vecino de arriba tiene una fiesta descontrolada y estan golpeando mi puerta, tengo miedo. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Complaints,Critical
+Corte de suministro por obra sin permiso,"Estan haciendo una obra sin permiso y me cortaron el agua sin avisar, es urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Complaints,Critical
+Ruidos molestos todas las noches,"Hay ruidos molestos todas las noches y ya no puedo dormir, necesito que intervengan pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Complaints,High
+Obra sin permiso rompio pared compartida,"Se esta haciendo una obra sin permiso y rompieron una pared compartida con mi departamento. Es urgente, necesito que lo resuelvan hoy mismo.",Complaints,High
+Vecino agresivo en reiteradas ocasiones,"Un vecino se puso agresivo conmigo dos veces esta semana, necesito que se tome una medida pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Complaints,High
+Filtracion de agua desde el departamento de arriba,"Del departamento de arriba filtra agua hacia el mio hace dias y el vecino no responde. Es urgente, necesito que lo resuelvan hoy mismo.",Complaints,High
+Basura en el pasillo,"El vecino de al lado deja la basura en el pasillo y genera mal olor. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Complaints,Medium
+Musica alta los fines de semana,"Hay quejas reiteradas por el volumen de la musica los fines de semana. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Complaints,Medium
+Portero no atiende bien,"El portero no atiende bien y varios vecinos ya se quejaron por lo mismo. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Complaints,Medium
+Bicicleta bloqueando la entrada,"Un vecino deja la bicicleta bloqueando la entrada del edificio todos los dias. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Complaints,Medium
+Uso del espacio de parrilla sin turno,"Queria dejar una queja sobre el uso del espacio de parrilla sin respetar el turno. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Complaints,Low
+Sugerencia sobre horario del SUM,"Seria bueno regular el horario de uso del SUM los fines de semana. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Complaints,Low
+Vecino fuma en el pasillo,"El vecino del 4B fuma en el pasillo, no es grave pero molesta un poco. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Complaints,Low
+"Oferta en firme, necesito respuesta hoy","Tengo una oferta en firme por el departamento y necesito una respuesta hoy mismo. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Sales inquiry,Critical
+Comprador con urgencia por viaje,"Me voy de viaje mañana y necesito cerrar la operacion hoy o pierdo el vuelo. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Sales inquiry,Critical
+Competencia de otro comprador,"Otro comprador ya hizo una oferta por la misma propiedad, necesito avanzar hoy. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Sales inquiry,Critical
+Vencimiento de reserva en pocas horas,"La reserva de la propiedad vence en pocas horas y necesito confirmar la operacion ya. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Sales inquiry,Critical
+Visita urgente antes de viajar,"Quiero agendar una visita urgente porque me voy de viaje mañana y no vuelvo pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Sales inquiry,High
+Necesito definir pronto por otra oferta en curso,"Me interesa la propiedad pero hay otra oferta en curso, necesito definir en las proximas horas. Es urgente, necesito que lo resuelvan hoy mismo.",Sales inquiry,High
+Cierre de operacion antes de fin de mes,"Necesito cerrar la operacion de compra antes de fin de mes por temas impositivos. Es urgente, necesito que lo resuelvan hoy mismo.",Sales inquiry,High
+Tasacion urgente para una venta rapida,"Necesito una tasacion urgente porque quiero vender la propiedad lo antes posible. Es urgente, necesito que lo resuelvan hoy mismo.",Sales inquiry,High
+Consulta de precio en Palermo,"Quisiera consultar el precio de venta de la propiedad en Palermo que vi publicada. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Sales inquiry,Medium
+Mas fotos del departamento en Belgrano,"Podrian mandarme mas fotos del departamento en alquiler de Belgrano. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Sales inquiry,Medium
+Coordinar tasacion para vender,"Quiero coordinar una tasacion de mi propiedad porque estoy pensando en venderla. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Sales inquiry,Medium
+Financiacion para la compra,"Necesito informacion sobre financiacion para la compra de un departamento. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Sales inquiry,Medium
+Zonas disponibles para alquiler temporario,"Consulta general sobre zonas disponibles para alquiler temporario. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Sales inquiry,Low
+Departamentos de un ambiente en catalogo,"Tienen departamentos de un ambiente disponibles en el catalogo actual. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Sales inquiry,Low
+Newsletter de propiedades nuevas,"Me gustaria recibir el newsletter de propiedades nuevas por mail. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Sales inquiry,Low

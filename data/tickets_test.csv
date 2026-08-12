@@ -1,0 +1,25 @@
+title,description,category,urgency
+Se inundo el garage,"Entro mucha agua al garage por una rotura de caño y hay autos cerca, es urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Maintenance,Critical
+Se rompio el calefon,"El calefon dejo de funcionar de golpe y no tengo agua caliente hace un dia. Es urgente, necesito que lo resuelvan hoy mismo.",Maintenance,High
+Puerta del balcon traba mal,"La puerta corredera del balcon traba mal, se atasca a mitad de camino. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Maintenance,Medium
+Timbre no suena en todos los ambientes,"El timbre se escucha en el living pero no en el dormitorio, seria bueno revisarlo. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Maintenance,Low
+Pago rechazado y corte inminente de agua,"Me avisaron que cortan el agua hoy por falta de pago pero ya hice la transferencia. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Billing,Critical
+Recargo por vencimiento que no correspondia,"Me cobraron un recargo por vencimiento pero pague a tiempo, necesito que lo revisen pronto. Es urgente, necesito que lo resuelvan hoy mismo.",Billing,High
+Duda sobre el resumen de cuenta,"No entiendo un item del resumen de cuenta de este mes, podrian explicarme. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Billing,Medium
+Consulta por resumen anual,"Queria consultar como pedir el resumen anual de pagos para el balance. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Billing,Low
+Cambio de cerradura por conflicto contractual,"Cambiaron la cerradura por un conflicto de contrato y no puedo entrar hoy, es urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Contract,Critical
+Falta un anexo para firmar la renovacion,"Falta un anexo para firmar la renovacion y el contrato vence en pocos dias. Es urgente, necesito que lo resuelvan hoy mismo.",Contract,High
+Consulta sobre cesion del contrato,"Queria saber si se puede cederle el contrato a otra persona. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Contract,Medium
+Consulta sobre mantenimiento de espacios comunes,"El contrato incluye el mantenimiento de los espacios comunes del edificio. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Contract,Low
+Falta certificado para firma urgente hoy,"Necesito el certificado de titularidad hoy porque firmamos la escritura en un par de horas. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Administrative,Critical
+Necesito la constancia antes de mañana,"Necesito la constancia de ingresos antes de mañana para presentar en el banco. Es urgente, necesito que lo resuelvan hoy mismo.",Administrative,High
+Consulta sobre actualizacion de DNI,"Queria saber como actualizar el numero de DNI en mis datos de contacto. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Administrative,Medium
+Tramites por mail,"Puedo hacer tramites administrativos por mail en lugar de ir en persona. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Administrative,Low
+Vecino rompio la puerta de mi departamento,"Un vecino rompio la puerta de mi departamento a la fuerza, necesito ayuda urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Complaints,Critical
+Ruidos y golpes reiterados de noche,"Hay golpes y ruidos fuertes durante la noche desde hace varios dias, no puedo descansar. Es urgente, necesito que lo resuelvan hoy mismo.",Complaints,High
+Mascotas sueltas en el jardin,"Quisiera reportar que dejan las mascotas sueltas en el jardin comun del edificio. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Complaints,Medium
+Olor a comida en el pasillo,"Hay olor a comida persistente en el pasillo, no es grave pero incomoda. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Complaints,Low
+Oferta que vence en el dia,"Tengo que confirmar una oferta de compra que vence hoy, necesito una respuesta urgente. Es una emergencia, necesito ayuda inmediata, no puede esperar.",Sales inquiry,Critical
+Visita antes de que se cierre otra operacion,"Necesito visitar la propiedad antes de que se cierre otra operacion en curso. Es urgente, necesito que lo resuelvan hoy mismo.",Sales inquiry,High
+Consulta sobre tasaciones gratuitas,"Queria saber si hacen tasaciones gratuitas para propiedades en alquiler. No es una emergencia, pero preferiria que lo resuelvan esta semana.",Sales inquiry,Medium
+Consulta sobre mascotas en Almagro,"La propiedad de Almagro admite mascotas? Es solo para saber antes de avanzar. No hay apuro, pueden atenderlo cuando tengan tiempo disponible.",Sales inquiry,Low
