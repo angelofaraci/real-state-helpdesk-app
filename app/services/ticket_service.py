@@ -22,9 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
-from app.models.enums import ContractStatus, TicketChannel, TicketStatus, UserRole
+from app.models.enums import (
+    ClassificationStatus,
+    ContractStatus,
+    TicketChannel,
+    TicketStatus,
+    UserRole,
+)
 from app.models.ticket import Ticket
 from app.repositories.category_repository import CategoryRepository
+from app.repositories.classification_repository import ClassificationRepository
 from app.repositories.contract_repository import ContractRepository
 from app.repositories.property_repository import PropertyRepository
 from app.repositories.ticket_repository import TicketRepository
@@ -96,8 +103,23 @@ async def list_tickets(
 async def get_ticket(session: AsyncSession, *, scope: OrgScope, ticket_id: UUID) -> Ticket:
     """Fetch a single ticket visible to `scope` (org + role). Raises
     `app.core.exceptions.NotFoundError` if it does not exist, belongs to a
-    different organization, or is not visible to the caller's role."""
-    return await TicketRepository(session, scope).get_or_404(ticket_id)
+    different organization, or is not visible to the caller's role.
+
+    Also attaches the ticket's classification metadata (predicted
+    category/urgency, confidence, `model_used`) from its `classifications`
+    row, if one exists, as plain (non-mapped) attributes on the returned
+    instance — `None` for each if the ticket has never been classified.
+    This is stage 2 (PR5) plumbing for `GET /tickets/:id`; role-gating
+    these fields (agent/admin only) happens at the API router, not here,
+    since this function has no opinion on response shape."""
+    ticket = await TicketRepository(session, scope).get_or_404(ticket_id)
+    classification = await ClassificationRepository(session, scope).get_by_ticket_id(ticket_id)
+    ticket.predicted_category = classification.predicted_category if classification else None
+    ticket.confidence = classification.confidence if classification else None
+    ticket.predicted_urgency = classification.predicted_urgency if classification else None
+    ticket.urgency_confidence = classification.urgency_confidence if classification else None
+    ticket.model_used = classification.model_used if classification else None
+    return ticket
 
 
 async def create_ticket(
@@ -106,8 +128,10 @@ async def create_ticket(
     scope: OrgScope,
     property_id: UUID,
     contract_id: UUID,
-    category_id: UUID,
-    urgency_id: UUID,
+    title: str,
+    description: str | None = None,
+    category_id: UUID | None = None,
+    urgency_id: UUID | None = None,
     channel: TicketChannel,
 ) -> Ticket:
     """Create a ticket in `scope`'s organization, enforcing Rule A's exact
@@ -136,6 +160,16 @@ async def create_ticket(
        retroactively change an already-created ticket's `sla_due_at`,
        since it is a stored timestamp, not a computed column.
 
+    Steps 5, 6, and 8 (category/urgency lookup + SLA computation) run ONLY
+    when both `category_id` and `urgency_id` are supplied — as of stage 2,
+    `TicketCreate`'s validator guarantees they are both-or-neither, so a
+    caller may omit both to defer classification to the async worker. When
+    omitted, the ticket is created with `category_id=None`,
+    `urgency_id=None`, `sla_due_at=None`, and
+    `classification_status=ClassificationStatus.PENDING` (explicit, rather
+    than relying on the column's DB-side default, so the in-memory instance
+    reflects it immediately without a round trip).
+
     The reporter (`user_id`) is always `scope.user_id`; `status` starts at
     `OPEN`; `agent_id` starts unset; `organization_id` is injected by
     `TicketRepository.add()` (inherited from `ScopedRepository.add()`).
@@ -150,32 +184,40 @@ async def create_ticket(
     if contract.status != ContractStatus.ACTIVE:
         raise ContractNotActiveError(f"contract {contract_id} is not active")
 
-    category = await CategoryRepository(session, scope).get_or_404(category_id)
-    if not category.active:
-        raise CategoryInactiveError(f"category {category_id} is inactive")
+    urgency = None
+    if category_id is not None and urgency_id is not None:
+        category = await CategoryRepository(session, scope).get_or_404(category_id)
+        if not category.active:
+            raise CategoryInactiveError(f"category {category_id} is inactive")
 
-    urgency = await UrgencyLevelRepository(session, scope).get_or_404(urgency_id)
-    if not urgency.active:
-        raise UrgencyInactiveError(f"urgency level {urgency_id} is inactive")
+        urgency = await UrgencyLevelRepository(session, scope).get_or_404(urgency_id)
+        if not urgency.active:
+            raise UrgencyInactiveError(f"urgency level {urgency_id} is inactive")
 
     if scope.role == UserRole.TENANT and contract.tenant_id != scope.user_id:
         raise NotFoundError("Contract", contract_id)
 
-    sla_due_at = datetime.now(UTC) + timedelta(hours=urgency.sla_hours)
-
-    repo = TicketRepository(session, scope)
-    ticket = repo.add(
+    fields: dict[str, object] = dict(
         user_id=scope.user_id,
         property_id=property_id,
         contract_id=contract_id,
+        title=title,
+        description=description,
         category_id=category_id,
         urgency_id=urgency_id,
         channel=channel,
         status=TicketStatus.OPEN,
         agent_id=None,
-        sla_due_at=sla_due_at,
         closed_at=None,
     )
+    if urgency is not None:
+        fields["sla_due_at"] = datetime.now(UTC) + timedelta(hours=urgency.sla_hours)
+    else:
+        fields["sla_due_at"] = None
+        fields["classification_status"] = ClassificationStatus.PENDING
+
+    repo = TicketRepository(session, scope)
+    ticket = repo.add(**fields)
     await session.flush()
     return ticket
 
@@ -187,8 +229,11 @@ async def update_ticket(
     ticket_id: UUID,
     status: TicketStatus | None = None,
     agent_id: UUID | None = None,
+    category_id: UUID | None = None,
+    urgency_id: UUID | None = None,
 ) -> Ticket:
-    """Update a ticket's `status` and/or `agent_id`.
+    """Update a ticket's `status`, `agent_id`, and/or `category_id`/
+    `urgency_id` (stage 2 — manual recategorization).
 
     Role gates run BEFORE any resource lookup (per the app's status-code
     precedence, 403 outranks 404 — "can never do this action at all" is
@@ -201,6 +246,10 @@ async def update_ticket(
       can never resolve/close a ticket. Any other status value is settable
       by any role that can see the ticket (free-form transitions, no
       strict state machine, CONFIRMED design).
+    - setting `category_id` and/or `urgency_id` requires the caller's role
+      to be `AGENT`/`ADMIN` (403 `ForbiddenError` otherwise) — only staff
+      may correct an AI classification (or classify manually, bypassing
+      the async worker).
 
     After the role gates, the ticket must resolve in `scope` (404
     otherwise, standard `get_or_404` visibility). If `agent_id` is
@@ -210,6 +259,17 @@ async def update_ticket(
     Setting `status=CLOSED` sets `closed_at = now()`; setting any other
     status clears `closed_at = None` — matching the DB CHECK constraint
     `ck_tickets_closed_at_matches_status`.
+
+    Setting `category_id` and/or `urgency_id` (either one, not necessarily
+    both) flags the ticket's existing `classifications` row as
+    human-corrected (`ClassificationRepository.mark_human_corrected` — a
+    no-op UPDATE if no such row exists yet, e.g. a ticket that was created
+    with explicit taxonomy and never touched by the worker) and recomputes
+    `sla_due_at` from the EFFECTIVE urgency level (the newly supplied
+    `urgency_id`, or the ticket's existing `urgency_id` if only
+    `category_id` was supplied) anchored on `ticket.created_at` — matching
+    the async worker's SLA-anchor convention (`created_at + sla_hours`),
+    NOT `datetime.now()`.
     """
     if agent_id is not None and scope.role not in _STAFF_ROLES:
         raise ForbiddenError("only agents/admins may assign a ticket to an agent")
@@ -217,8 +277,11 @@ async def update_ticket(
     if status in (TicketStatus.RESOLVED, TicketStatus.CLOSED) and scope.role not in _STAFF_ROLES:
         raise ForbiddenError("only agents/admins may resolve or close a ticket")
 
+    if (category_id is not None or urgency_id is not None) and scope.role not in _STAFF_ROLES:
+        raise ForbiddenError("only agents/admins may recategorize a ticket")
+
     repo = TicketRepository(session, scope)
-    await repo.get_or_404(ticket_id)
+    ticket = await repo.get_or_404(ticket_id)
 
     fields: dict[str, object] = {}
 
@@ -233,5 +296,15 @@ async def update_ticket(
     if status is not None:
         fields["status"] = status
         fields["closed_at"] = datetime.now(UTC) if status == TicketStatus.CLOSED else None
+
+    if category_id is not None or urgency_id is not None:
+        effective_urgency_id = urgency_id if urgency_id is not None else ticket.urgency_id
+        urgency = await UrgencyLevelRepository(session, scope).get_or_404(effective_urgency_id)
+
+        fields["category_id"] = category_id if category_id is not None else ticket.category_id
+        fields["urgency_id"] = effective_urgency_id
+        fields["sla_due_at"] = ticket.created_at + timedelta(hours=urgency.sla_hours)
+
+        await ClassificationRepository(session, scope).mark_human_corrected(ticket_id)
 
     return await repo.update(ticket_id, **fields)

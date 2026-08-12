@@ -23,9 +23,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from arq import Retry
+from arq import Retry, create_pool
+from arq.connections import RedisSettings
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.scope import OrgScope
 from app.models.enums import ClassificationStatus
 from app.models.ticket import Ticket
@@ -161,3 +163,23 @@ async def sweep_pending_classifications(ctx: dict[str, Any]) -> None:
 
         for ticket in stale_tickets:
             await redis.enqueue_job("classify_ticket", ticket.id, ticket.organization_id)
+
+
+async def enqueue_classification(ticket_id: UUID, organization_id: UUID) -> None:
+    """Enqueue a `classify_ticket` job for a just-created ticket whose
+    taxonomy was omitted (`classification_status="pending"`).
+
+    Called from the API layer via `fastapi.BackgroundTasks`, right after
+    the creating request commits — see `app.api.v1.tickets.create_ticket`.
+    Opens a short-lived Redis connection pool scoped to this single enqueue
+    call rather than a persistent app-lifecycle pool: `app.main` has no
+    lifespan hook to hang one off of yet, and a per-call pool is simple and
+    cheap enough for stage 2. The pool is always closed, even if the
+    enqueue itself raises.
+    """
+    settings = get_settings()
+    redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    try:
+        await redis.enqueue_job("classify_ticket", ticket_id, organization_id)
+    finally:
+        await redis.aclose()

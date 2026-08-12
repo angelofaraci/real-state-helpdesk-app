@@ -401,3 +401,39 @@ async def test_sweep_queries_pending_tickets_older_than_five_minutes() -> None:
     redis.enqueue_job.assert_not_awaited()
     # sanity: the cutoff used is "now - 5 minutes", not something else.
     assert before <= after
+
+
+# ---------------------------------------------------------------------------
+# enqueue_classification — the API layer's post-create hook (PR5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enqueue_classification_opens_a_pool_enqueues_and_closes(monkeypatch) -> None:
+    ticket_id = uuid4()
+    organization_id = uuid4()
+    fake_redis = AsyncMock()
+    fake_create_pool = AsyncMock(return_value=fake_redis)
+    monkeypatch.setattr(worker, "create_pool", fake_create_pool)
+
+    await worker.enqueue_classification(ticket_id, organization_id)
+
+    fake_create_pool.assert_awaited_once()
+    fake_redis.enqueue_job.assert_awaited_once_with(
+        "classify_ticket", ticket_id, organization_id
+    )
+    fake_redis.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_classification_closes_the_pool_even_if_enqueue_fails(monkeypatch) -> None:
+    ticket_id = uuid4()
+    organization_id = uuid4()
+    fake_redis = AsyncMock()
+    fake_redis.enqueue_job.side_effect = RuntimeError("redis unreachable")
+    monkeypatch.setattr(worker, "create_pool", AsyncMock(return_value=fake_redis))
+
+    with pytest.raises(RuntimeError):
+        await worker.enqueue_classification(ticket_id, organization_id)
+
+    fake_redis.aclose.assert_awaited_once()

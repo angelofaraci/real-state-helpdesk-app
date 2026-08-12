@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import deps
+from app.api.v1 import tickets as tickets_module
 from app.core.exceptions import NotFoundError as CoreNotFoundError
 from app.core.session import get_session
 from app.main import app
@@ -205,6 +206,7 @@ def test_create_ticket_returns_201(client, monkeypatch) -> None:
     app.dependency_overrides[deps.get_principal] = lambda: principal
     created = _make_ticket(principal)
     monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock(return_value=created))
+    monkeypatch.setattr(tickets_module, "enqueue_classification", AsyncMock())
 
     response = client.post("/api/v1/tickets", json=_create_payload())
 
@@ -217,6 +219,7 @@ def test_create_ticket_with_explicit_category_id_returns_pending(client, monkeyp
     app.dependency_overrides[deps.get_principal] = lambda: principal
     created = _make_ticket(principal, classification_status=ClassificationStatus.PENDING)
     monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock(return_value=created))
+    monkeypatch.setattr(tickets_module, "enqueue_classification", AsyncMock())
 
     response = client.post("/api/v1/tickets", json=_create_payload())
 
@@ -233,6 +236,7 @@ def test_create_ticket_ignores_classification_status_in_payload(client, monkeypa
     created = _make_ticket(principal, classification_status=ClassificationStatus.PENDING)
     mocked = AsyncMock(return_value=created)
     monkeypatch.setattr(ticket_service, "create_ticket", mocked)
+    monkeypatch.setattr(tickets_module, "enqueue_classification", AsyncMock())
 
     response = client.post(
         "/api/v1/tickets",
@@ -380,3 +384,92 @@ def test_update_ticket_maps_invalid_agent_to_422(client, monkeypatch) -> None:
     )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 (PR5) — background enqueue of the async classification job when
+# taxonomy is omitted at creation.
+# ---------------------------------------------------------------------------
+
+
+def test_create_ticket_without_taxonomy_enqueues_classification_job(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.TENANT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    created = _make_ticket(principal, classification_status=ClassificationStatus.PENDING)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock(return_value=created))
+    mocked_enqueue = AsyncMock()
+    monkeypatch.setattr(tickets_module, "enqueue_classification", mocked_enqueue)
+
+    payload = _create_payload()
+    del payload["category_id"]
+    del payload["urgency_id"]
+
+    response = client.post("/api/v1/tickets", json=payload)
+
+    assert response.status_code == 201
+    mocked_enqueue.assert_awaited_once_with(created.id, created.organization_id)
+
+
+def test_create_ticket_with_taxonomy_enqueues_nothing(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.TENANT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    created = _make_ticket(principal, classification_status=ClassificationStatus.CLASSIFIED)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock(return_value=created))
+    mocked_enqueue = AsyncMock()
+    monkeypatch.setattr(tickets_module, "enqueue_classification", mocked_enqueue)
+
+    response = client.post("/api/v1/tickets", json=_create_payload())
+
+    assert response.status_code == 201
+    mocked_enqueue.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 (PR5) — GET /tickets/:id role-gates classification metadata
+# (predicted category/urgency, confidence, model_used) to agent/admin.
+# ---------------------------------------------------------------------------
+
+
+def _attach_classification_metadata(ticket: Ticket) -> Ticket:
+    ticket.predicted_category = "Plumbing"
+    ticket.confidence = 0.87
+    ticket.predicted_urgency = "High"
+    ticket.urgency_confidence = 0.75
+    ticket.model_used = "sklearn_v1"
+    return ticket
+
+
+@pytest.mark.parametrize("role", [UserRole.AGENT, UserRole.ADMIN])
+def test_get_ticket_includes_classification_metadata_for_staff(client, monkeypatch, role) -> None:
+    principal = _fake_principal(role=role)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _attach_classification_metadata(_make_ticket(principal))
+    monkeypatch.setattr(ticket_service, "get_ticket", AsyncMock(return_value=target))
+
+    response = client.get(f"/api/v1/tickets/{target.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["predicted_category"] == "Plumbing"
+    assert body["confidence"] == 0.87
+    assert body["predicted_urgency"] == "High"
+    assert body["urgency_confidence"] == 0.75
+    assert body["model_used"] == "sklearn_v1"
+
+
+@pytest.mark.parametrize("role", [UserRole.TENANT, UserRole.OWNER])
+def test_get_ticket_hides_classification_metadata_for_non_staff(client, monkeypatch, role) -> None:
+    principal = _fake_principal(role=role)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _attach_classification_metadata(_make_ticket(principal))
+    monkeypatch.setattr(ticket_service, "get_ticket", AsyncMock(return_value=target))
+
+    response = client.get(f"/api/v1/tickets/{target.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["predicted_category"] is None
+    assert body["confidence"] is None
+    assert body["predicted_urgency"] is None
+    assert body["urgency_confidence"] is None
+    assert body["model_used"] is None

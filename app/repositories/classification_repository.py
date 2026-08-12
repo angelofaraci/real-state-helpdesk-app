@@ -71,3 +71,13 @@ class ClassificationRepository(ScopedRepository[Classification]):
             .values(human_corrected=True)
         )
         await self._session.execute(stmt)
+
+    async def get_by_ticket_id(self, ticket_id: UUID) -> Classification | None:
+        """Fetch the `classifications` row for `ticket_id`, or `None` if the
+        ticket has never been classified (by the worker or a human) — the
+        lookup `ticket_service.get_ticket` uses to surface predicted
+        category/urgency, confidence, and `model_used` on `GET
+        /tickets/:id`."""
+        stmt = self.select().where(Classification.ticket_id == ticket_id)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()

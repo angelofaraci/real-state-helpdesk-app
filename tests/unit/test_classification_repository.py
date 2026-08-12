@@ -144,3 +144,42 @@ async def test_mark_human_corrected_updates_the_row_for_the_ticket() -> None:
     assert "human_corrected=true" in sql or "human_corrected = true" in sql
     assert "classifications.ticket_id" in sql
     assert ticket_id.hex in sql
+
+
+# ---------------------------------------------------------------------------
+# get_by_ticket_id (PR5) — the lookup `ticket_service.get_ticket` uses to
+# surface classification metadata on `GET /tickets/:id`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_by_ticket_id_returns_the_scoped_row() -> None:
+    session = AsyncMock()
+    execute_result = AsyncMock()
+    fake_row = object()
+    execute_result.scalar_one_or_none = lambda: fake_row
+    session.execute.return_value = execute_result
+    repo = ClassificationRepository(session, _scope())
+    ticket_id = uuid.uuid4()
+
+    result = await repo.get_by_ticket_id(ticket_id)
+
+    assert result is fake_row
+    session.execute.assert_awaited_once()
+    (stmt,), _kwargs = session.execute.call_args
+    sql = _compiled(stmt)
+    assert "classifications.ticket_id" in sql
+    assert ticket_id.hex in sql
+
+
+@pytest.mark.asyncio
+async def test_get_by_ticket_id_returns_none_when_no_row_exists() -> None:
+    session = AsyncMock()
+    execute_result = AsyncMock()
+    execute_result.scalar_one_or_none = lambda: None
+    session.execute.return_value = execute_result
+    repo = ClassificationRepository(session, _scope())
+
+    result = await repo.get_by_ticket_id(uuid.uuid4())
+
+    assert result is None
