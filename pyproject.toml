@@ -26,6 +26,7 @@ dependencies = [
     "psycopg[binary]==3.3.4",
     "joblib==1.5.3",
     "openai==2.54.0",
+    "arq==0.28.0",
 ]
 
 [project.optional-dependencies]
