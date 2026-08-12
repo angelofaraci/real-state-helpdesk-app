@@ -14,13 +14,14 @@ Session-boundary behavior (`get_or_404`) is verified against a mocked
 """
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
-from app.models.enums import TicketStatus, UserRole
+from app.models.enums import ClassificationStatus, TicketStatus, UserRole
 from app.repositories.ticket_repository import TicketRepository
 
 
@@ -180,3 +181,35 @@ async def test_get_or_404_returns_the_row_when_visible() -> None:
     result = await repo.get_or_404(uuid.uuid4())
 
     assert result is fake_row
+
+
+# ---------------------------------------------------------------------------
+# list_pending(): tickets still awaiting classification, older than a cutoff
+# ---------------------------------------------------------------------------
+
+
+def test_list_pending_filters_by_status_and_created_at() -> None:
+    scope = _scope(role=UserRole.ADMIN)
+    repo = TicketRepository(AsyncMock(), scope)
+    cutoff = datetime(2026, 1, 1, tzinfo=UTC)
+
+    sql = _compiled(repo.list_pending(older_than=cutoff))
+
+    assert "tickets.classification_status" in sql
+    assert f"'{ClassificationStatus.PENDING.value}'" in sql
+    assert "tickets.created_at" in sql
+    assert "2026-01-01" in sql
+    assert scope.organization_id.hex in sql
+
+
+def test_list_pending_is_scoped_like_select() -> None:
+    scope = _scope(role=UserRole.TENANT)
+    repo = TicketRepository(AsyncMock(), scope)
+    cutoff = datetime(2026, 1, 1, tzinfo=UTC)
+
+    sql = _compiled(repo.list_pending(older_than=cutoff))
+
+    # A tenant's list_pending() still goes through the role-fused select(),
+    # not a bare org-scoped query.
+    assert "EXISTS" in sql
+    assert "contracts" in sql

@@ -69,6 +69,8 @@ def _make_ticket(
         user_id=uuid4(),
         property_id=None,
         contract_id=None,
+        title="Leaking faucet",
+        description=None,
         category_id=uuid4(),
         urgency_id=uuid4(),
         channel=TicketChannel.WEB,
@@ -190,6 +192,7 @@ def _create_payload(**overrides) -> dict:
     payload = dict(
         property_id=str(uuid4()),
         contract_id=str(uuid4()),
+        title="Leaking faucet",
         category_id=str(uuid4()),
         urgency_id=str(uuid4()),
     )

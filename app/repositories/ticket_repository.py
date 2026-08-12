@@ -24,12 +24,13 @@ exact same code path.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Select, exists, or_
 
 from app.models.contract import Contract
-from app.models.enums import TicketStatus, UserRole
+from app.models.enums import ClassificationStatus, TicketStatus, UserRole
 from app.models.property import Property
 from app.models.ticket import Ticket
 from app.repositories.base import ScopedRepository
@@ -91,3 +92,13 @@ class TicketRepository(ScopedRepository[Ticket]):
         if property_id is not None:
             stmt = stmt.where(Ticket.property_id == property_id)
         return stmt
+
+    def list_pending(self, *, older_than: datetime) -> Select[tuple[Ticket]]:
+        """A role-scoped `SELECT` of tickets still awaiting classification
+        (`classification_status='pending'`) created before `older_than` —
+        the query the async classification worker polls to find stale,
+        unclassified tickets (e.g. after a worker crash/restart)."""
+        return self.select().where(
+            Ticket.classification_status == ClassificationStatus.PENDING,
+            Ticket.created_at < older_than,
+        )
