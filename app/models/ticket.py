@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, String, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
@@ -34,18 +34,22 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("contracts.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # ON DELETE RESTRICT is deliberate: it is what makes the taxonomy
     # hard-delete-or-deactivate logic (a later work unit) safe, since a
     # category/urgency level referenced by any ticket cannot be removed.
-    category_id: Mapped[uuid.UUID] = mapped_column(
+    # Nullable: a ticket may exist before classification assigns taxonomy
+    # (see ck_tickets_classified_has_taxonomy below).
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("categories.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    urgency_id: Mapped[uuid.UUID] = mapped_column(
+    urgency_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("urgency_levels.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
     channel: Mapped[TicketChannel] = mapped_column(
         SAEnum(
@@ -79,8 +83,8 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    sla_due_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
+    sla_due_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
     closed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
@@ -90,6 +94,13 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "(status = 'closed') = (closed_at IS NOT NULL)",
             name="ck_tickets_closed_at_matches_status",
+        ),
+        CheckConstraint("btrim(title) <> ''", name="ck_tickets_title_not_blank"),
+        CheckConstraint(
+            "classification_status <> 'classified' OR "
+            "(category_id IS NOT NULL AND urgency_id IS NOT NULL AND "
+            "sla_due_at IS NOT NULL)",
+            name="ck_tickets_classified_has_taxonomy",
         ),
         Index("ix_tickets_organization_id_user_id", "organization_id", "user_id"),
         Index("ix_tickets_property_id", "property_id"),

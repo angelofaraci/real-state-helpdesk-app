@@ -53,6 +53,22 @@ def test_org_scope_is_frozen() -> None:
         scope.organization_id = uuid4()  # type: ignore[misc]
 
 
+def test_for_background_worker() -> None:
+    """Background workers (e.g. the classification worker) act without an
+    authenticated request principal. `for_background_worker` builds a scope
+    using the shared `SYSTEM_ACTOR_ID` sentinel as `user_id`, scoped to the
+    given organization, with admin-level access."""
+    from app.core.scope import SYSTEM_ACTOR_ID
+
+    org_id = uuid4()
+
+    scope = OrgScope.for_background_worker(org_id)
+
+    assert scope.organization_id == org_id
+    assert scope.user_id == SYSTEM_ACTOR_ID
+    assert scope.role == UserRole.ADMIN
+
+
 def test_for_new_organization() -> None:
     """The one sanctioned bypass of `from_principal`: builds a scope for a
     just-flushed organization using a super-admin actor whose own

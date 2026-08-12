@@ -72,9 +72,11 @@ def test_tickets_table_foreign_keys_and_optional_columns() -> None:
 
     assert tickets.columns["property_id"].nullable is True
     assert tickets.columns["contract_id"].nullable is True
-    assert tickets.columns["category_id"].nullable is False
-    assert tickets.columns["urgency_id"].nullable is False
-    assert tickets.columns["sla_due_at"].nullable is False
+    # Nullable as of migration 0003: a ticket may exist before
+    # classification assigns taxonomy (see test_ticket_model.py).
+    assert tickets.columns["category_id"].nullable is True
+    assert tickets.columns["urgency_id"].nullable is True
+    assert tickets.columns["sla_due_at"].nullable is True
 
     category_fk_targets = {
         fk.target_fullname for fk in tickets.columns["category_id"].foreign_keys

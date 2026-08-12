@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     super_admin_password: str | None = None
     super_admin_name: str = "Super Admin"
 
+    # Stage 2 — ticket classification.
+    redis_url: str = "redis://localhost:6379/0"
+    embedding_provider: str = "local"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    classifier_confidence_threshold: float = 0.6
+    ml_artifacts_dir: str = "./ml_artifacts"
+
 
 @lru_cache
 def get_settings() -> Settings:
