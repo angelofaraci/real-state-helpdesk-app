@@ -19,6 +19,7 @@ from app.main import app
 from app.models.enums import AuthorType, UserRole, UserStatus
 from app.models.message import Message
 from app.services import message_service
+from app.services.message_service import InvalidSuggestionReferenceError
 
 _UNSET = object()
 
@@ -177,5 +178,47 @@ def test_create_message_requires_content(client) -> None:
     app.dependency_overrides[deps.get_principal] = lambda: principal
 
     response = client.post(f"/api/v1/tickets/{uuid4()}/messages", json={})
+
+    assert response.status_code == 422
+
+
+def test_create_message_passes_based_on_suggestion_id_to_the_service(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.AGENT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    ticket_id = uuid4()
+    suggestion_id = uuid4()
+    created = _make_message(
+        ticket_id,
+        author_type=AuthorType.AGENT,
+        content="on my way",
+        based_on_suggestion_id=suggestion_id,
+    )
+    mocked = AsyncMock(return_value=created)
+    monkeypatch.setattr(message_service, "create_message", mocked)
+
+    response = client.post(
+        f"/api/v1/tickets/{ticket_id}/messages",
+        json={"content": "on my way", "based_on_suggestion_id": str(suggestion_id)},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["based_on_suggestion_id"] == str(suggestion_id)
+    _, kwargs = mocked.call_args
+    assert kwargs["based_on_suggestion_id"] == suggestion_id
+
+
+def test_create_message_maps_invalid_suggestion_reference_to_422(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.AGENT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    monkeypatch.setattr(
+        message_service,
+        "create_message",
+        AsyncMock(side_effect=InvalidSuggestionReferenceError("bad reference")),
+    )
+
+    response = client.post(
+        f"/api/v1/tickets/{uuid4()}/messages",
+        json={"content": "hi", "based_on_suggestion_id": str(uuid4())},
+    )
 
     assert response.status_code == 422
