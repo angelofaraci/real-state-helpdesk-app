@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.api.v1.auth import router as auth_router
 from app.api.v1.categories import router as categories_router
 from app.api.v1.contracts import router as contracts_router
+from app.api.v1.knowledge_base import router as knowledge_base_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.properties import router as properties_router
 from app.api.v1.tickets import router as tickets_router
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     application.include_router(categories_router)
     application.include_router(urgency_levels_router)
     application.include_router(tickets_router)
+    application.include_router(knowledge_base_router)
     application.add_exception_handler(NotFoundError, _handle_not_found)
     return application
 

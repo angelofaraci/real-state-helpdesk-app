@@ -20,8 +20,9 @@ neighbors than an exact scan) before truncating to the caller's requested
 from __future__ import annotations
 
 from collections.abc import Sequence
+from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, select
 
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.repositories.base import ScopedRepository
@@ -56,3 +57,14 @@ class KnowledgeChunkRepository(ScopedRepository[KnowledgeChunk]):
             .order_by(distance)
             .limit(limit * overfetch)
         )
+
+    async def delete_for_knowledge_base(self, knowledge_base_id: UUID) -> None:
+        """Bulk-delete every `knowledge_chunks` row for `knowledge_base_id`
+        (scoped), without loading them into the session first — used by
+        `app.services.knowledge_base_service.delete_knowledge_base`'s
+        explicit app-level cascade ahead of the parent `knowledge_base`
+        row's own delete."""
+        stmt = delete(KnowledgeChunk).where(
+            self.scope_clause(), KnowledgeChunk.knowledge_base_id == knowledge_base_id
+        )
+        await self._session.execute(stmt)
