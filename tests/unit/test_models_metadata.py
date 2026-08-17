@@ -22,10 +22,13 @@ EXPECTED_TABLE_NAMES = {
     "tickets",
     "messages",
     "classifications",
+    "knowledge_base",
+    "knowledge_chunks",
+    "ticket_embeddings",
 }
 
 
-def test_metadata_contains_exactly_the_eleven_expected_tables() -> None:
+def test_metadata_contains_exactly_the_fourteen_expected_tables() -> None:
     assert set(Base.metadata.tables.keys()) == EXPECTED_TABLE_NAMES
 
 

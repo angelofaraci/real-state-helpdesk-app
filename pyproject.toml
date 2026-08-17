@@ -29,6 +29,7 @@ dependencies = [
     "arq==0.28.0",
     "scikit-learn==1.6.1",
     "numpy>=1.26,<3",
+    "tiktoken==0.8.0",
 ]
 
 [project.optional-dependencies]

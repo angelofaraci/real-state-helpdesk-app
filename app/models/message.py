@@ -30,8 +30,21 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_ai_suggestion: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    # Links a human-authored message to the AI-suggested message it was
+    # based on (RAG-assisted reply). Nullable: most messages have no
+    # suggestion lineage. ON DELETE SET NULL: deleting the suggestion
+    # message must not cascade-delete the human reply that used it.
+    based_on_suggestion_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint("btrim(content) <> ''", name="ck_messages_content_not_blank"),
+        CheckConstraint(
+            "based_on_suggestion_id IS NULL OR based_on_suggestion_id <> id",
+            name="ck_messages_based_on_suggestion_not_self",
+        ),
         Index("ix_messages_ticket_id_created_at_id", "ticket_id", "created_at", "id"),
     )
