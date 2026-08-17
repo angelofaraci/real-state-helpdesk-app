@@ -280,6 +280,135 @@ async def test_updating_category_and_urgency_marks_human_corrected_and_recompute
     assert target.id.hex in sql
 
 
+# ---------------------------------------------------------------------------
+# Stage 3 (PR5) — `entered_resolved_or_closed`: a plain non-mapped attribute
+# `update_ticket` stashes on the returned `Ticket` instance (same pattern as
+# `get_ticket` attaching `predicted_category` etc.), signalling the API
+# route layer whether THIS PATCH transitioned the ticket's status from a
+# non-terminal value into `RESOLVED`/`CLOSED`, so it knows whether to
+# enqueue `embed_resolved_ticket`. Computed from the OLD status (captured
+# before `repo.update()` mutates the ORM instance in place) vs. the NEW
+# status — never from `status is not None` alone, since a re-PATCH of an
+# already-resolved/closed ticket (e.g. an unrelated `agent_id` change, or
+# re-sending the same status) must NOT re-trigger the embed job.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_transition_into_resolved_flags_entered_resolved_or_closed() -> None:
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.OPEN)
+    session = _session_returning_sequence(target, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.RESOLVED
+    )
+
+    assert updated.entered_resolved_or_closed is True
+
+
+@pytest.mark.asyncio
+async def test_transition_into_closed_flags_entered_resolved_or_closed() -> None:
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.OPEN)
+    session = _session_returning_sequence(target, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.CLOSED
+    )
+
+    assert updated.entered_resolved_or_closed is True
+
+
+@pytest.mark.asyncio
+async def test_transition_from_resolved_to_closed_still_flags_it() -> None:
+    """A ticket moving RESOLVED -> CLOSED is a distinct entry into CLOSED
+    (a real status change), so it still flags -- the worker-side `upsert`
+    (not this flag) is what makes a resulting double-fire idempotent."""
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.RESOLVED)
+    session = _session_returning_sequence(target, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.CLOSED
+    )
+
+    assert updated.entered_resolved_or_closed is True
+
+
+@pytest.mark.asyncio
+async def test_unrelated_patch_on_an_already_resolved_ticket_does_not_flag() -> None:
+    scope = _scope(role=UserRole.ADMIN)
+    target = _ticket(scope, status=TicketStatus.RESOLVED)
+    agent = _user(scope, role=UserRole.AGENT)
+    session = _session_returning_sequence(target, agent, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, agent_id=agent.id
+    )
+
+    assert updated.entered_resolved_or_closed is False
+
+
+@pytest.mark.asyncio
+async def test_resending_the_same_terminal_status_does_not_flag() -> None:
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.CLOSED)
+    session = _session_returning_sequence(target, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.CLOSED
+    )
+
+    assert updated.entered_resolved_or_closed is False
+
+
+@pytest.mark.asyncio
+async def test_reopen_does_not_flag() -> None:
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.CLOSED)
+    session = _session_returning_sequence(target, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.OPEN
+    )
+
+    assert updated.entered_resolved_or_closed is False
+
+
+@pytest.mark.asyncio
+async def test_reopen_then_reresolve_flags_again() -> None:
+    """Reopen -> re-resolve: a fresh transition into RESOLVED from a
+    non-terminal status, so it must flag again (the worker regenerates the
+    summary)."""
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.OPEN)
+    session = _session_returning_sequence(target, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.RESOLVED
+    )
+
+    assert updated.entered_resolved_or_closed is True
+
+
+@pytest.mark.asyncio
+async def test_no_status_in_patch_does_not_flag() -> None:
+    scope = _scope(role=UserRole.ADMIN)
+    target = _ticket(
+        scope, status=TicketStatus.OPEN, urgency_id=uuid4(), created_at=datetime.now(UTC)
+    )
+    existing_urgency = _urgency(scope, id=target.urgency_id, sla_hours=2)
+    new_category_id = uuid4()
+    session = _session_returning_sequence(target, existing_urgency, None, target)
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, category_id=new_category_id
+    )
+
+    assert updated.entered_resolved_or_closed is False
+
+
 @pytest.mark.asyncio
 async def test_updating_category_only_reuses_the_tickets_existing_urgency_for_sla() -> None:
     scope = _scope(role=UserRole.ADMIN)

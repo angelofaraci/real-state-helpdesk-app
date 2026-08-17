@@ -50,6 +50,7 @@ from app.services.ticket_service import (
     UrgencyInactiveError,
 )
 from app.workers.classification import enqueue_classification
+from app.workers.rag import enqueue_resolved_ticket_embedding
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
 
@@ -165,6 +166,7 @@ async def _create_ticket_or_422(
 async def update_ticket(
     ticket_id: UUID,
     payload: TicketPatch,
+    background_tasks: BackgroundTasks,
     scope: OrgScope = Depends(require_org_member),
     session: AsyncSession = Depends(get_session),
 ) -> Ticket:
@@ -172,10 +174,20 @@ async def update_ticket(
     `app.services.ticket_service.update_ticket`'s docstring for the role
     gates (Rule B): assigning an agent or resolving/closing a ticket
     requires an `AGENT`/`ADMIN` role (403 otherwise); an invalid
-    `agent_id` surfaces as 404 (unresolvable) or 422 (wrong role)."""
+    `agent_id` surfaces as 404 (unresolvable) or 422 (wrong role).
+
+    Stage 3 (PR5): when this PATCH is the actual transition edge into
+    `RESOLVED`/`CLOSED` (`ticket_service.update_ticket`'s
+    `entered_resolved_or_closed` flag on the returned ticket — `getattr`
+    defaults to `False` since most other call sites/tests mock
+    `update_ticket` without setting it), an `embed_resolved_ticket` job is
+    enqueued via `BackgroundTasks` (runs after the response is sent),
+    mirroring `create_ticket`'s `enqueue_classification` hook above. An
+    unrelated PATCH to an already-resolved/closed ticket (e.g. just
+    `agent_id`) or re-sending the same status enqueues nothing."""
     fields = payload.model_dump(exclude_unset=True)
     try:
-        return await ticket_service.update_ticket(
+        ticket = await ticket_service.update_ticket(
             session, scope=scope, ticket_id=ticket_id, **fields
         )
     except ForbiddenError as exc:
@@ -184,6 +196,13 @@ async def update_ticket(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+
+    if getattr(ticket, "entered_resolved_or_closed", False):
+        background_tasks.add_task(
+            enqueue_resolved_ticket_embedding, ticket.id, ticket.organization_id
+        )
+
+    return ticket
 
 
 @router.get("/{ticket_id}/messages", response_model=list[MessageResponse])
