@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     classifier_confidence_threshold: float = 0.6
     ml_artifacts_dir: str = "./ml_artifacts"
 
+    # Stage 3 — RAG (knowledge base + ticket similarity search).
+    rag_embedding_provider: str = "local"
+    rag_embedding_model: str = "all-mpnet-base-v2"
+    rag_openai_embedding_model: str = "text-embedding-3-small"
+    rag_similarity_threshold: float = 0.5
+    rag_kb_top_k: int = 5
+    rag_ticket_top_k: int = 3
+    rag_search_overfetch: int = 4
+    rag_chunk_max_tokens: int = 512
+    rag_chunk_overlap_tokens: int = 64
+
 
 @lru_cache
 def get_settings() -> Settings:
