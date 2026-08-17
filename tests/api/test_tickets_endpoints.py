@@ -338,6 +338,67 @@ def test_update_ticket_returns_200(client, monkeypatch) -> None:
     assert response.json()["status"] == "resolved"
 
 
+# ---------------------------------------------------------------------------
+# Stage 3 (PR5) — `PATCH /tickets/:id` enqueues `embed_resolved_ticket` when
+# `ticket_service.update_ticket` flags `entered_resolved_or_closed=True` on
+# the returned ticket (the actual transition edge into RESOLVED/CLOSED),
+# mirroring `enqueue_classification`'s `BackgroundTasks` pattern on create.
+# ---------------------------------------------------------------------------
+
+
+def test_update_ticket_transitioning_into_resolved_enqueues_embedding_job(
+    client, monkeypatch
+) -> None:
+    principal = _fake_principal(role=UserRole.AGENT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _make_ticket(principal)
+    target.status = TicketStatus.RESOLVED
+    target.entered_resolved_or_closed = True
+    monkeypatch.setattr(ticket_service, "update_ticket", AsyncMock(return_value=target))
+    mocked_enqueue = AsyncMock()
+    monkeypatch.setattr(tickets_module, "enqueue_resolved_ticket_embedding", mocked_enqueue)
+
+    response = client.patch(f"/api/v1/tickets/{target.id}", json={"status": "resolved"})
+
+    assert response.status_code == 200
+    mocked_enqueue.assert_awaited_once_with(target.id, target.organization_id)
+
+
+def test_update_ticket_unrelated_patch_enqueues_nothing(client, monkeypatch) -> None:
+    principal = _fake_principal(role=UserRole.ADMIN)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _make_ticket(principal)
+    target.status = TicketStatus.RESOLVED
+    target.entered_resolved_or_closed = False
+    monkeypatch.setattr(ticket_service, "update_ticket", AsyncMock(return_value=target))
+    mocked_enqueue = AsyncMock()
+    monkeypatch.setattr(tickets_module, "enqueue_resolved_ticket_embedding", mocked_enqueue)
+
+    response = client.patch(f"/api/v1/tickets/{target.id}", json={"agent_id": str(uuid4())})
+
+    assert response.status_code == 200
+    mocked_enqueue.assert_not_awaited()
+
+
+def test_update_ticket_missing_flag_attribute_enqueues_nothing(client, monkeypatch) -> None:
+    """`ticket_service.update_ticket` is mocked in most other tests without
+    setting `entered_resolved_or_closed` at all — the route must treat a
+    missing attribute the same as `False`, never raise."""
+    principal = _fake_principal(role=UserRole.AGENT)
+    app.dependency_overrides[deps.get_principal] = lambda: principal
+    target = _make_ticket(principal)
+    target.status = TicketStatus.RESOLVED
+    assert not hasattr(target, "entered_resolved_or_closed")
+    monkeypatch.setattr(ticket_service, "update_ticket", AsyncMock(return_value=target))
+    mocked_enqueue = AsyncMock()
+    monkeypatch.setattr(tickets_module, "enqueue_resolved_ticket_embedding", mocked_enqueue)
+
+    response = client.patch(f"/api/v1/tickets/{target.id}", json={"status": "resolved"})
+
+    assert response.status_code == 200
+    mocked_enqueue.assert_not_awaited()
+
+
 def test_update_ticket_maps_forbidden_to_403(client, monkeypatch) -> None:
     principal = _fake_principal(role=UserRole.TENANT)
     app.dependency_overrides[deps.get_principal] = lambda: principal

@@ -270,6 +270,16 @@ async def update_ticket(
     `category_id` was supplied) anchored on `ticket.created_at` — matching
     the async worker's SLA-anchor convention (`created_at + sla_hours`),
     NOT `datetime.now()`.
+
+    Stage 3 (PR5): stashes a plain non-mapped `entered_resolved_or_closed`
+    boolean on the returned instance (same "extra attribute on the ORM
+    object" pattern `get_ticket` already uses for `predicted_category`
+    etc.) — `True` only when THIS call's `status` moved the ticket from a
+    non-terminal status into `RESOLVED`/`CLOSED` (old status captured
+    before `repo.update()` mutates the object in place, compared against
+    the new one), so the API route layer knows whether to enqueue
+    `embed_resolved_ticket` without re-firing on an unrelated PATCH to an
+    already-resolved/closed ticket or on re-sending the same status.
     """
     if agent_id is not None and scope.role not in _STAFF_ROLES:
         raise ForbiddenError("only agents/admins may assign a ticket to an agent")
@@ -282,6 +292,7 @@ async def update_ticket(
 
     repo = TicketRepository(session, scope)
     ticket = await repo.get_or_404(ticket_id)
+    previous_status = ticket.status
 
     fields: dict[str, object] = {}
 
@@ -307,4 +318,17 @@ async def update_ticket(
 
         await ClassificationRepository(session, scope).mark_human_corrected(ticket_id)
 
-    return await repo.update(ticket_id, **fields)
+    updated = await repo.update(ticket_id, **fields)
+
+    # Stage 3 (PR5): non-mapped attribute, same pattern `get_ticket` uses
+    # for `predicted_category` etc. — signals the API route layer whether
+    # THIS patch is the transition edge into a terminal status, so it knows
+    # whether to enqueue `embed_resolved_ticket` (see this function's
+    # docstring).
+    updated.entered_resolved_or_closed = (
+        status is not None
+        and status in (TicketStatus.RESOLVED, TicketStatus.CLOSED)
+        and previous_status != status
+    )
+
+    return updated

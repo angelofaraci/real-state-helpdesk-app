@@ -16,7 +16,15 @@ to pick up:
   `settings.rag_embedding_provider` (see `app.services.rag_embeddings`) —
   deliberately separate from `ctx["embedder"]` above (different model,
   different dimension), built once per worker process for
-  `app.workers.rag.embed_knowledge_document` to use.
+  `app.workers.rag.embed_knowledge_document` and
+  `app.workers.rag.embed_resolved_ticket` to use.
+
+`ctx["llm_client"]` is deliberately NOT set here: `embed_resolved_ticket`
+looks it up via `ctx.get("llm_client")` and, when absent (the real
+`on_startup` case), constructs its own `openai.AsyncOpenAI` client per
+call from `settings.openai_api_key` — the same injectable-client pattern
+`app.services.llm_fallback.classify_with_llm` already uses, so tests can
+inject a fake client without this module needing to build one upfront.
 
 `on_shutdown` disposes the engine so the process doesn't leak connections
 on exit.
@@ -34,7 +42,7 @@ from app.core.config import get_settings
 from app.services.embeddings import get_embedding_provider
 from app.services.rag_embeddings import get_rag_embedding_provider
 from app.workers.classification import classify_ticket, sweep_pending_classifications
-from app.workers.rag import embed_knowledge_document
+from app.workers.rag import embed_knowledge_document, embed_resolved_ticket
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
@@ -55,7 +63,7 @@ async def on_shutdown(ctx: dict[str, Any]) -> None:
 class WorkerSettings:
     """arq `Worker` configuration for the classification worker process."""
 
-    functions = [classify_ticket, embed_knowledge_document]
+    functions = [classify_ticket, embed_knowledge_document, embed_resolved_ticket]
     cron_jobs = [
         cron(sweep_pending_classifications, minute=set(range(0, 60, 5)), run_at_startup=False)
     ]

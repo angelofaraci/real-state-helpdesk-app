@@ -1,6 +1,6 @@
-"""Unit tests for `app.workers.rag` — the async RAG ingestion worker job
-(`embed_knowledge_document`) and its enqueue helper
-(`enqueue_kb_embedding`).
+"""Unit tests for `app.workers.rag` — the async RAG ingestion worker jobs
+(`embed_knowledge_document`, `embed_resolved_ticket`) and their enqueue
+helpers (`enqueue_kb_embedding`, `enqueue_resolved_ticket_embedding`).
 
 `AsyncSession` is mocked, following the exact pattern established by
 `tests/unit/test_worker_classification.py`: the worker opens/commits its
@@ -17,8 +17,12 @@ from uuid import uuid4
 
 import arq
 import pytest
+from sqlalchemy.dialects import postgresql
 
+from app.models.enums import AuthorType, TicketChannel, TicketStatus
 from app.models.knowledge_base import KnowledgeBase
+from app.models.message import Message
+from app.models.ticket import Ticket
 from app.workers import rag as worker
 
 
@@ -304,5 +308,373 @@ async def test_enqueue_kb_embedding_closes_the_pool_even_if_enqueue_fails(monkey
 
     with pytest.raises(RuntimeError):
         await worker.enqueue_kb_embedding(knowledge_base_id, organization_id)
+
+    fake_redis.aclose.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# embed_resolved_ticket — helpers
+#
+# No live Postgres is available in this sandbox: idempotency is verified by
+# asserting the job's DB write compiles to `INSERT ... ON CONFLICT
+# (ticket_id) DO UPDATE` (the real `TicketEmbeddingRepository.upsert`, not
+# a mock standing in for it) across repeated job runs for the same ticket,
+# same approach `tests/unit/test_ticket_embedding_repository.py` uses for
+# the repository directly.
+# ---------------------------------------------------------------------------
+
+
+def _ticket(*, organization_id, ticket_id=None, **overrides) -> Ticket:
+    defaults = dict(
+        id=ticket_id or uuid4(),
+        organization_id=organization_id,
+        user_id=uuid4(),
+        property_id=None,
+        contract_id=None,
+        title="Leaking faucet",
+        description="The kitchen faucet has been dripping for a week.",
+        channel=TicketChannel.WEB,
+        status=TicketStatus.RESOLVED,
+        agent_id=None,
+        sla_due_at=None,
+        closed_at=None,
+        created_at=datetime.now(UTC),
+    )
+    defaults.update(overrides)
+    return Ticket(**defaults)
+
+
+def _message(*, ticket_id, content, author_type=AuthorType.USER, **overrides) -> Message:
+    defaults = dict(
+        id=uuid4(),
+        ticket_id=ticket_id,
+        author_type=author_type,
+        content=content,
+        is_ai_suggestion=False,
+        created_at=datetime.now(UTC),
+    )
+    defaults.update(overrides)
+    return Message(**defaults)
+
+
+def _scalar_result(scalar: object) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar
+    return result
+
+
+def _scalars_result(items: list) -> MagicMock:
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = items
+    return result
+
+
+def _session_with_execute_results(*results: MagicMock) -> AsyncMock:
+    session = AsyncMock()
+    session.execute.side_effect = list(results)
+    return session
+
+
+class _FakeLLMClient:
+    """Stand-in for an `openai.AsyncOpenAI`-shaped client — only the
+    `chat.completions.create(...)` surface `embed_resolved_ticket` uses."""
+
+    def __init__(self, content: str | None = "A dripping kitchen faucet was repaired.",
+                 side_effect: BaseException | None = None) -> None:
+        self._content = content
+        self._side_effect = side_effect
+        self.calls: list[dict] = []
+
+        class _Completions:
+            def __init__(self, outer: "_FakeLLMClient") -> None:
+                self._outer = outer
+
+            async def create(self, **kwargs):
+                self._outer.calls.append(kwargs)
+                if self._outer._side_effect is not None:
+                    raise self._outer._side_effect
+                message = MagicMock(content=self._outer._content)
+                choice = MagicMock(message=message)
+                return MagicMock(choices=[choice])
+
+        self.chat = MagicMock(completions=_Completions(self))
+
+
+def _upsert_sql(stmt) -> str:
+    return str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+# ---------------------------------------------------------------------------
+# embed_resolved_ticket — success path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_success_path_summarizes_embeds_and_upserts() -> None:
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    messages = [
+        _message(ticket_id=ticket.id, content="My faucet is leaking."),
+        _message(
+            ticket_id=ticket.id,
+            content="An agent replaced the washer; issue resolved.",
+            author_type=AuthorType.AGENT,
+        ),
+    ]
+    session = _session_with_execute_results(
+        _scalar_result(ticket), _scalars_result(messages), MagicMock()
+    )
+    llm_client = _FakeLLMClient()
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(),
+        "llm_client": llm_client,
+    }
+
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    session.commit.assert_awaited_once()
+    (stmt,), _ = session.execute.call_args_list[2]
+    sql = _upsert_sql(stmt)
+    assert "INSERT INTO ticket_embeddings" in sql
+    assert "ON CONFLICT (ticket_id) DO UPDATE" in sql
+    assert str(ticket.id) in sql
+    assert llm_client.calls  # the LLM was actually called to summarize
+
+
+@pytest.mark.asyncio
+async def test_resolution_prompt_excludes_pii_instruction_is_present() -> None:
+    """Q3 business decision: the prompt itself must instruct the LLM to
+    exclude names/addresses/identifiable personal details."""
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    messages = [_message(ticket_id=ticket.id, content="My faucet is leaking.")]
+    session = _session_with_execute_results(
+        _scalar_result(ticket), _scalars_result(messages), MagicMock()
+    )
+    llm_client = _FakeLLMClient()
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(),
+        "llm_client": llm_client,
+    }
+
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    prompt = llm_client.calls[0]["messages"][0]["content"]
+    assert "name" in prompt.lower()
+    assert "address" in prompt.lower()
+    assert "personal" in prompt.lower() or "identifiable" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# embed_resolved_ticket — idempotency: resolved->closed double-fire and
+# reopen->re-resolve both upsert (never insert-only / never raise / never
+# duplicate).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolved_then_closed_double_fire_upserts_twice_same_ticket() -> None:
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id, status=TicketStatus.RESOLVED)
+    messages = [_message(ticket_id=ticket.id, content="Leak fixed.")]
+
+    session = _session_with_execute_results(
+        _scalar_result(ticket),
+        _scalars_result(messages),
+        MagicMock(),
+        _scalar_result(ticket),
+        _scalars_result(messages),
+        MagicMock(),
+    )
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(),
+        "llm_client": _FakeLLMClient(),
+    }
+
+    # First fire: transition into RESOLVED.
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+    # Second fire: transition RESOLVED -> CLOSED (double delivery scenario).
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    assert session.execute.await_count == 6
+    upsert_calls = [session.execute.call_args_list[2], session.execute.call_args_list[5]]
+    for call in upsert_calls:
+        (stmt,), _ = call
+        sql = _upsert_sql(stmt)
+        assert "INSERT INTO ticket_embeddings" in sql
+        assert "ON CONFLICT (ticket_id) DO UPDATE" in sql
+        assert str(ticket.id) in sql
+
+
+@pytest.mark.asyncio
+async def test_reopen_then_reresolve_regenerates_summary_via_upsert() -> None:
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id, status=TicketStatus.RESOLVED)
+    first_messages = [_message(ticket_id=ticket.id, content="Original issue resolved.")]
+    second_messages = [
+        _message(ticket_id=ticket.id, content="Original issue resolved."),
+        _message(ticket_id=ticket.id, content="Issue reopened."),
+        _message(ticket_id=ticket.id, content="Re-resolved after a second visit."),
+    ]
+
+    session = _session_with_execute_results(
+        _scalar_result(ticket),
+        _scalars_result(first_messages),
+        MagicMock(),
+        _scalar_result(ticket),
+        _scalars_result(second_messages),
+        MagicMock(),
+    )
+    llm_client = _FakeLLMClient(content="Second, distinct resolution summary.")
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(),
+        "llm_client": llm_client,
+    }
+
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    first_sql = _upsert_sql(session.execute.call_args_list[2].args[0])
+    second_sql = _upsert_sql(session.execute.call_args_list[5].args[0])
+    assert "ON CONFLICT (ticket_id) DO UPDATE" in first_sql
+    assert "ON CONFLICT (ticket_id) DO UPDATE" in second_sql
+    assert "'Second, distinct resolution summary.'" in second_sql
+
+
+# ---------------------------------------------------------------------------
+# embed_resolved_ticket — transient failure (retry)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_llm_connection_error_raises_arq_retry_with_backoff() -> None:
+    import openai
+
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    messages = [_message(ticket_id=ticket.id, content="Leak fixed.")]
+    session = _session_with_execute_results(_scalar_result(ticket), _scalars_result(messages))
+    llm_client = _FakeLLMClient(
+        side_effect=openai.APIConnectionError(request=MagicMock())
+    )
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(),
+        "llm_client": llm_client,
+        "job_try": 2,
+    }
+
+    with pytest.raises(arq.Retry) as exc_info:
+        await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    assert exc_info.value.defer_score == (2**2) * 1000
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_embedder_connection_error_raises_arq_retry() -> None:
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    messages = [_message(ticket_id=ticket.id, content="Leak fixed.")]
+    session = _session_with_execute_results(_scalar_result(ticket), _scalars_result(messages))
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(side_effect=ConnectionError("network down")),
+        "llm_client": _FakeLLMClient(),
+    }
+
+    with pytest.raises(arq.Retry):
+        await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    session.commit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# embed_resolved_ticket — permanent failure: logged, no write, no raise
+# (ticket_embeddings has no status/embedding_error column to record it on).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_llm_summary_is_a_permanent_failure_logged_no_raise(caplog) -> None:
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    messages = [_message(ticket_id=ticket.id, content="Leak fixed.")]
+    session = _session_with_execute_results(_scalar_result(ticket), _scalars_result(messages))
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(),
+        "llm_client": _FakeLLMClient(content="   "),
+    }
+
+    # Must not raise.
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    session.commit.assert_not_awaited()
+    # Only the ticket + messages lookups happened — no write attempted.
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_dimension_mismatch_is_a_permanent_failure_logged_no_raise() -> None:
+    from app.services.rag_embeddings import RagEmbeddingDimensionError
+
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    messages = [_message(ticket_id=ticket.id, content="Leak fixed.")]
+    session = _session_with_execute_results(_scalar_result(ticket), _scalars_result(messages))
+    ctx = {
+        "session_factory": _session_factory(session),
+        "rag_embedder": _FakeEmbedder(
+            side_effect=RagEmbeddingDimensionError("RAG embedding must be 768-dim, got 2")
+        ),
+        "llm_client": _FakeLLMClient(),
+    }
+
+    await worker.embed_resolved_ticket(ctx, ticket.id, organization_id)
+
+    session.commit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# enqueue_resolved_ticket_embedding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enqueue_resolved_ticket_embedding_opens_a_pool_enqueues_and_closes(
+    monkeypatch,
+) -> None:
+    ticket_id = uuid4()
+    organization_id = uuid4()
+    fake_redis = AsyncMock()
+    fake_create_pool = AsyncMock(return_value=fake_redis)
+    monkeypatch.setattr(worker, "create_pool", fake_create_pool)
+
+    await worker.enqueue_resolved_ticket_embedding(ticket_id, organization_id)
+
+    fake_create_pool.assert_awaited_once()
+    fake_redis.enqueue_job.assert_awaited_once_with(
+        "embed_resolved_ticket", ticket_id, organization_id
+    )
+    fake_redis.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_resolved_ticket_embedding_closes_the_pool_even_if_enqueue_fails(
+    monkeypatch,
+) -> None:
+    ticket_id = uuid4()
+    organization_id = uuid4()
+    fake_redis = AsyncMock()
+    fake_redis.enqueue_job.side_effect = RuntimeError("redis unreachable")
+    monkeypatch.setattr(worker, "create_pool", AsyncMock(return_value=fake_redis))
+
+    with pytest.raises(RuntimeError):
+        await worker.enqueue_resolved_ticket_embedding(ticket_id, organization_id)
 
     fake_redis.aclose.assert_awaited_once()
