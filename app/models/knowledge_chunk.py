@@ -1,11 +1,9 @@
 """KnowledgeChunk model — a chunked, embedded slice of a knowledge base
 article's content, used for RAG retrieval.
 
-`RAG_EMBEDDING_DIM` is a module-local constant for stage 3 PR1. Once
-`app.services.rag_embeddings` exists (a later PR in this change), the
-embedding provider's dimension constant should become the single source of
-truth and this module (and `ticket_embedding.py`) should import from it
-instead of redefining it locally.
+`RAG_EMBEDDING_DIM` is re-exported from `app.services.rag_embeddings`, the
+single source of truth for the RAG embedding vector dimension (bound to
+this model's `embedding` column width).
 """
 
 import uuid
@@ -16,8 +14,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-
-RAG_EMBEDDING_DIM = 768
+from app.services.rag_embeddings import RAG_EMBEDDING_DIM
 
 
 class KnowledgeChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):

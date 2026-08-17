@@ -1,8 +1,8 @@
 """TicketEmbedding model — a single embedding vector summarizing a ticket's
 conversation, used for RAG similarity search over past tickets.
 
-`RAG_EMBEDDING_DIM` is a module-local constant for stage 3 PR1 — see the
-note in `knowledge_chunk.py`.
+`RAG_EMBEDDING_DIM` is re-exported from `app.services.rag_embeddings` — see
+the note in `knowledge_chunk.py`.
 """
 
 import uuid
@@ -13,8 +13,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-
-RAG_EMBEDDING_DIM = 768
+from app.services.rag_embeddings import RAG_EMBEDDING_DIM
 
 
 class TicketEmbedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
