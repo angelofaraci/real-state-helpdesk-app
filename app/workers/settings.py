@@ -12,6 +12,11 @@ to pick up:
 - `ctx["embedder"]`: the `EmbeddingProvider` selected by
   `settings.embedding_provider`, built once per worker process rather than
   per job.
+- `ctx["rag_embedder"]`: the Stage-3 RAG `RagEmbeddingProvider` selected by
+  `settings.rag_embedding_provider` (see `app.services.rag_embeddings`) —
+  deliberately separate from `ctx["embedder"]` above (different model,
+  different dimension), built once per worker process for
+  `app.workers.rag.embed_knowledge_document` to use.
 
 `on_shutdown` disposes the engine so the process doesn't leak connections
 on exit.
@@ -27,7 +32,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 from app.services.embeddings import get_embedding_provider
+from app.services.rag_embeddings import get_rag_embedding_provider
 from app.workers.classification import classify_ticket, sweep_pending_classifications
+from app.workers.rag import embed_knowledge_document
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
@@ -36,6 +43,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     ctx["engine"] = engine
     ctx["session_factory"] = async_sessionmaker(bind=engine, expire_on_commit=False)
     ctx["embedder"] = get_embedding_provider()
+    ctx["rag_embedder"] = get_rag_embedding_provider()
 
 
 async def on_shutdown(ctx: dict[str, Any]) -> None:
@@ -47,7 +55,7 @@ async def on_shutdown(ctx: dict[str, Any]) -> None:
 class WorkerSettings:
     """arq `Worker` configuration for the classification worker process."""
 
-    functions = [classify_ticket]
+    functions = [classify_ticket, embed_knowledge_document]
     cron_jobs = [
         cron(sweep_pending_classifications, minute=set(range(0, 60, 5)), run_at_startup=False)
     ]
