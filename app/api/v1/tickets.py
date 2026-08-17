@@ -29,18 +29,24 @@ just reached through a nested route.
 
 from uuid import UUID
 
+import openai
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_org_member
+from app.api.deps import require_org_member, require_org_staff
+from app.api.deps_rag import get_llm_client, get_rag_embedder
 from app.core.scope import OrgScope
 from app.core.session import get_session
 from app.models.enums import ClassificationStatus, TicketStatus, UserRole
 from app.models.message import Message
 from app.models.ticket import Ticket
 from app.schemas.message import MessageCreate, MessageResponse
+from app.schemas.rag import SuggestedResponseOut, SuggestionOut
 from app.schemas.ticket import TicketCreate, TicketPatch, TicketResponse
 from app.services import message_service, ticket_service
+from app.services import rag as rag_service
+from app.services.message_service import InvalidSuggestionReferenceError
+from app.services.rag_embeddings import RagEmbeddingProvider
 from app.services.ticket_service import (
     CategoryInactiveError,
     ContractNotActiveError,
@@ -232,7 +238,50 @@ async def create_message(
     server-side from the caller's role (see
     `app.services.message_service.create_message`) — it is not, and
     cannot be, a client-settable field on `MessageCreate`. A cross-org or
-    role-invisible `ticket_id` surfaces as 404."""
-    return await message_service.create_message(
-        session, scope=scope, ticket_id=ticket_id, content=payload.content
+    role-invisible `ticket_id` surfaces as 404.
+
+    `based_on_suggestion_id`, when supplied, must reference an existing
+    AI-suggestion message on this same ticket (and cannot self-reference);
+    otherwise 422 (`InvalidSuggestionReferenceError`)."""
+    try:
+        return await message_service.create_message(
+            session,
+            scope=scope,
+            ticket_id=ticket_id,
+            content=payload.content,
+            based_on_suggestion_id=payload.based_on_suggestion_id,
+        )
+    except InvalidSuggestionReferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
+@router.get("/{ticket_id}/suggested-response", response_model=SuggestedResponseOut)
+async def get_suggested_response(
+    ticket_id: UUID,
+    scope: OrgScope = Depends(require_org_staff),
+    session: AsyncSession = Depends(get_session),
+    embedder: RagEmbeddingProvider = Depends(get_rag_embedder),
+    llm_client: openai.AsyncOpenAI = Depends(get_llm_client),
+) -> SuggestedResponseOut:
+    """Return a grounded AI-drafted reply suggestion for this ticket
+    (agent/admin only — see `app.services.rag.suggest_response`'s
+    docstring for caching/freshness and the Q4 empty-retrieval rule). A
+    cross-org or role-invisible `ticket_id` surfaces as 404.
+
+    When no grounded source was found (Q4), `suggestion` is `null` and
+    `reason` explains why — this is a 200, not an error."""
+    result = await rag_service.suggest_response(
+        session, scope=scope, ticket_id=ticket_id, embedder=embedder, llm_client=llm_client
+    )
+    if result is None:
+        return SuggestedResponseOut(suggestion=None, reason="no grounded suggestion available")
+
+    return SuggestedResponseOut(
+        suggestion=SuggestionOut(
+            message_id=result.message.id,
+            content=result.message.content,
+            top_similarity=result.top_similarity,
+        )
     )

@@ -23,6 +23,7 @@ from app.models.message import Message
 from app.models.ticket import Ticket
 from app.repositories.ticket_repository import TicketRepository
 from app.services import message_service
+from app.services.message_service import InvalidSuggestionReferenceError
 
 
 def _scope(**overrides) -> OrgScope:
@@ -134,3 +135,174 @@ async def test_create_message_derives_author_type_from_role(
     assert message.content == "hello there"
     assert message.ticket_id == ticket.id
     session.add.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 6.1/6.2 — `based_on_suggestion_id` validation on message creation
+# ---------------------------------------------------------------------------
+
+
+def _execute_scalar(scalar) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar
+    return result
+
+
+@pytest.mark.asyncio
+async def test_create_message_with_valid_suggestion_reference_persists_link(monkeypatch) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    suggestion = _message(
+        ticket.id, id=uuid4(), is_ai_suggestion=True, author_type=AuthorType.BOT
+    )
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_execute_scalar(suggestion))
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    message = await message_service.create_message(
+        session,
+        scope=scope,
+        ticket_id=ticket.id,
+        content="Thanks, replaced the washer.",
+        based_on_suggestion_id=suggestion.id,
+    )
+
+    assert message.based_on_suggestion_id == suggestion.id
+    session.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_message_rejects_suggestion_from_a_different_ticket(monkeypatch) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    other_ticket_suggestion = _message(uuid4(), id=uuid4(), is_ai_suggestion=True)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_execute_scalar(other_ticket_suggestion))
+    session.add = MagicMock()
+
+    with pytest.raises(InvalidSuggestionReferenceError):
+        await message_service.create_message(
+            session,
+            scope=scope,
+            ticket_id=ticket.id,
+            content="hi",
+            based_on_suggestion_id=other_ticket_suggestion.id,
+        )
+
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_message_rejects_reference_to_a_non_suggestion_message(monkeypatch) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    not_a_suggestion = _message(ticket.id, id=uuid4(), is_ai_suggestion=False)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_execute_scalar(not_a_suggestion))
+    session.add = MagicMock()
+
+    with pytest.raises(InvalidSuggestionReferenceError):
+        await message_service.create_message(
+            session,
+            scope=scope,
+            ticket_id=ticket.id,
+            content="hi",
+            based_on_suggestion_id=not_a_suggestion.id,
+        )
+
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_message_rejects_reference_to_a_nonexistent_message(monkeypatch) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_execute_scalar(None))
+    session.add = MagicMock()
+
+    with pytest.raises(InvalidSuggestionReferenceError):
+        await message_service.create_message(
+            session,
+            scope=scope,
+            ticket_id=ticket.id,
+            content="hi",
+            based_on_suggestion_id=uuid4(),
+        )
+
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_message_rejects_self_reference(monkeypatch) -> None:
+    """A message can never legitimately reference itself: the new
+    message's own id is generated server-side (`UUIDPrimaryKeyMixin`'s
+    Python-side `uuid.uuid4` default) and is never known to the client
+    ahead of time. This test forces the degenerate collision by pinning
+    `uuid.uuid4()` so the service's defense-in-depth check (mirroring the
+    DB's own `ck_messages_based_on_suggestion_not_self` CHECK constraint)
+    is proven to run and reject it with a clean 422-mappable error instead
+    of ever reaching the database."""
+    scope = _scope(role=UserRole.AGENT)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    pinned_id = uuid4()
+    monkeypatch.setattr(message_service.uuid, "uuid4", lambda: pinned_id)
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    with pytest.raises(InvalidSuggestionReferenceError):
+        await message_service.create_message(
+            session,
+            scope=scope,
+            ticket_id=ticket.id,
+            content="hi",
+            based_on_suggestion_id=pinned_id,
+        )
+
+    session.add.assert_not_called()
+    session.execute.assert_not_awaited()  # rejected before the lookup query
+
+
+# ---------------------------------------------------------------------------
+# 6.3/6.4 — Q1 visibility filter: AI suggestions hidden from tenant/owner,
+# visible to agent/admin, in `list_messages`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.TENANT, UserRole.OWNER])
+async def test_list_messages_filters_out_ai_suggestions_for_non_staff(monkeypatch, role) -> None:
+    scope = _scope(role=role)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    session = _session_returning_scalars([])
+
+    await message_service.list_messages(session, scope=scope, ticket_id=ticket.id)
+
+    stmt = session.execute.call_args.args[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    where_clause = sql.split("WHERE", 1)[1]
+    assert "is_ai_suggestion" in where_clause
+    assert "false" in where_clause.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.AGENT, UserRole.ADMIN])
+async def test_list_messages_does_not_filter_ai_suggestions_for_staff(monkeypatch, role) -> None:
+    scope = _scope(role=role)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    session = _session_returning_scalars([])
+
+    await message_service.list_messages(session, scope=scope, ticket_id=ticket.id)
+
+    stmt = session.execute.call_args.args[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    where_clause = sql.split("WHERE", 1)[1]
+    assert "is_ai_suggestion" not in where_clause

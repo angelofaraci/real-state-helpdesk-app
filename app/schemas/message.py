@@ -8,6 +8,12 @@ accepted field on this schema, so a client attempting to inject one is
 silently dropped by Pydantic's default `extra="ignore"` behavior before the
 service layer ever sees it. This is enforced structurally by the schema's
 shape, not by a runtime check.
+
+`based_on_suggestion_id` (Stage 3, PR7) IS client-settable: it lets a human
+reply declare which AI suggestion (`is_ai_suggestion=True` message) it was
+drafted from. `app.services.message_service.create_message` validates it
+server-side (same ticket, must reference an actual suggestion, no
+self-reference) — see `InvalidSuggestionReferenceError`.
 """
 
 from datetime import datetime
@@ -20,6 +26,7 @@ from app.models.enums import AuthorType
 
 class MessageCreate(BaseModel):
     content: str
+    based_on_suggestion_id: UUID | None = None
 
     @field_validator("content")
     @classmethod
@@ -35,6 +42,7 @@ class MessageResponse(BaseModel):
     author_type: AuthorType
     content: str
     is_ai_suggestion: bool
+    based_on_suggestion_id: UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
