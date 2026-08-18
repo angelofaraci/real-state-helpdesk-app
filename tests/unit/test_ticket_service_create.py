@@ -402,3 +402,40 @@ async def test_create_with_both_taxonomy_ids_still_computes_sla_synchronously() 
     assert ticket.urgency_id == urgency.id
     assert ticket.sla_due_at is not None
     assert session.execute.await_count == 4
+
+
+# ---------------------------------------------------------------------------
+# Stage 4 (PR3) — chat-originated tickets have no property/contract context
+# at all: `property_id`/`contract_id` are optional (`UUID | None`).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_chat_origin_ticket_without_property_or_contract() -> None:
+    """`property_id=None`/`contract_id=None` (chat-origin path, see
+    `app.services.chat_tools.escalate_to_human`) skips every check that
+    depends on a resolved property/contract — no `session.execute` call at
+    all — and still creates the ticket successfully."""
+    scope = _scope(role=UserRole.TENANT)
+    session = _session_returning_sequence()
+
+    ticket = await ticket_service.create_ticket(
+        session,
+        scope=scope,
+        property_id=None,
+        contract_id=None,
+        title="Chat escalation",
+        description="Escalated from chatbot",
+        category_id=None,
+        urgency_id=None,
+        channel=TicketChannel.WEB,
+    )
+
+    assert ticket.property_id is None
+    assert ticket.contract_id is None
+    assert ticket.user_id == scope.user_id
+    assert ticket.status == TicketStatus.OPEN
+    assert ticket.sla_due_at is None
+    assert ticket.classification_status == ClassificationStatus.PENDING
+    assert session.execute.await_count == 0
+    session.flush.assert_awaited_once()

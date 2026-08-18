@@ -126,8 +126,8 @@ async def create_ticket(
     session: AsyncSession,
     *,
     scope: OrgScope,
-    property_id: UUID,
-    contract_id: UUID,
+    property_id: UUID | None,
+    contract_id: UUID | None,
     title: str,
     description: str | None = None,
     category_id: UUID | None = None,
@@ -170,18 +170,33 @@ async def create_ticket(
     than relying on the column's DB-side default, so the in-memory instance
     reflects it immediately without a round trip).
 
+    `property_id`/`contract_id` are ALSO optional (stage 4 — chatbot):
+    when either is `None`, its resolution + the checks that depend on it
+    (steps 1/2 for the missing one, step 3's mismatch check, step 4's
+    active check, and step 7's tenant-ownership check — all of which
+    require a resolved `contract`) are skipped entirely. This supports
+    chat-originated tickets (e.g. `app.services.chat_tools.escalate_to_
+    human`) that have no property/contract context at all. The
+    authenticated/property-bearing flow (both ids supplied) is completely
+    unaffected — every original check still runs in the same order.
+
     The reporter (`user_id`) is always `scope.user_id`; `status` starts at
     `OPEN`; `agent_id` starts unset; `organization_id` is injected by
     `TicketRepository.add()` (inherited from `ScopedRepository.add()`).
     """
-    property_ = await PropertyRepository(session, scope).get_or_404(property_id)
-    contract = await ContractRepository(session, scope).get_or_404(contract_id)
+    property_ = None
+    if property_id is not None:
+        property_ = await PropertyRepository(session, scope).get_or_404(property_id)
 
-    if contract.property_id != property_.id:
+    contract = None
+    if contract_id is not None:
+        contract = await ContractRepository(session, scope).get_or_404(contract_id)
+
+    if property_ is not None and contract is not None and contract.property_id != property_.id:
         raise ContractPropertyMismatchError(
             f"contract {contract_id} does not belong to property {property_id}"
         )
-    if contract.status != ContractStatus.ACTIVE:
+    if contract is not None and contract.status != ContractStatus.ACTIVE:
         raise ContractNotActiveError(f"contract {contract_id} is not active")
 
     urgency = None
@@ -194,7 +209,11 @@ async def create_ticket(
         if not urgency.active:
             raise UrgencyInactiveError(f"urgency level {urgency_id} is inactive")
 
-    if scope.role == UserRole.TENANT and contract.tenant_id != scope.user_id:
+    if (
+        contract is not None
+        and scope.role == UserRole.TENANT
+        and contract.tenant_id != scope.user_id
+    ):
         raise NotFoundError("Contract", contract_id)
 
     fields: dict[str, object] = dict(
