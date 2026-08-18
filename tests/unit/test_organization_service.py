@@ -128,6 +128,30 @@ async def test_create_organization_flushes_once_for_the_org_and_once_after_seedi
 
 
 @pytest.mark.asyncio
+async def test_create_organization_generates_a_unique_chat_widget_key() -> None:
+    """Stage 4 — chatbot: every newly created org must get a unique
+    `chat_widget_key` at creation time, not only via the migration 0005
+    backfill (which only covers orgs that existed before that migration)."""
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    with patch(
+        "app.services.organization_service.taxonomy_seed.seed_default_taxonomy",
+        AsyncMock(),
+    ):
+        org_a = await organization_service.create_organization(
+            session, name="Acme Corp", actor=_super_admin()
+        )
+        org_b = await organization_service.create_organization(
+            session, name="Beta Corp", actor=_super_admin()
+        )
+
+    assert org_a.chat_widget_key
+    assert org_b.chat_widget_key
+    assert org_a.chat_widget_key != org_b.chat_widget_key
+
+
+@pytest.mark.asyncio
 async def test_get_organization_returns_the_row() -> None:
     fake_org = MagicMock(spec=Organization)
     session = _session_returning(fake_org)

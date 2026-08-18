@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 # non-Optional shape for audit/logging purposes in worker contexts.
 SYSTEM_ACTOR_ID: Final[UUID] = UUID("00000000-0000-0000-0000-000000000001")
 
+# Sentinel `user_id` for scopes constructed on behalf of an anonymous
+# chat-widget visitor (stage 4 — chatbot), who has no authenticated request
+# principal and no `users` row at all. Like `SYSTEM_ACTOR_ID`, this must
+# NEVER be written to any FK column that references `users.id`. Its purpose
+# is the opposite of `for_background_worker`'s admin-level access: it must
+# match ZERO rows under `TicketRepository`'s tenant-role visibility clause
+# (`Ticket.user_id == scope.user_id OR EXISTS(... Contract.tenant_id ==
+# scope.user_id ...)`), since no real user or contract can ever carry this
+# id — an anonymous chat session has no ticket/contract visibility at all.
+ANONYMOUS_CHAT_ACTOR_ID: Final[UUID] = UUID("00000000-0000-0000-0000-000000000002")
+
 
 @dataclass(frozen=True, slots=True)
 class OrgScope:
@@ -79,4 +90,19 @@ class OrgScope:
             organization_id=organization_id,
             user_id=SYSTEM_ACTOR_ID,
             role=UserRole.ADMIN,
+        )
+
+    @classmethod
+    def for_anonymous_chat(cls, organization_id: UUID) -> OrgScope:
+        """Build a scope for an anonymous chat-widget visitor (stage 4 —
+        chatbot), who has no authenticated request principal. Uses the
+        `ANONYMOUS_CHAT_ACTOR_ID` sentinel as `user_id` — never a real
+        user — with tenant-level role, so any ticket-visibility query run
+        under this scope structurally matches zero rows (no real ticket or
+        contract can ever carry this sentinel id).
+        """
+        return cls(
+            organization_id=organization_id,
+            user_id=ANONYMOUS_CHAT_ACTOR_ID,
+            role=UserRole.TENANT,
         )
