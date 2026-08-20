@@ -17,7 +17,13 @@ from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
 from app.models.chat_session import ChatSession
 from app.models.contract import Contract
-from app.models.enums import ChatSessionStatus, ContractStatus, TicketStatus, UserRole
+from app.models.enums import (
+    ChatSessionStatus,
+    ContractStatus,
+    TicketChannel,
+    TicketStatus,
+    UserRole,
+)
 from app.models.ticket import Ticket
 from app.repositories.ticket_repository import TicketRepository
 from app.services import chat_tools, ticket_service
@@ -39,6 +45,10 @@ def _chat_session(scope: OrgScope, **overrides) -> ChatSession:
         status=ChatSessionStatus.ACTIVE,
         low_confidence_streak=0,
         last_activity_at=datetime.now(UTC),
+        # Stage 5 — multichannel: real rows always have a channel (NOT
+        # NULL, migration 0007), so tests that don't care about it default
+        # to WEB, same as the DB's own server_default.
+        channel=TicketChannel.WEB,
     )
     defaults.update(overrides)
     return ChatSession(**defaults)
@@ -159,6 +169,37 @@ async def test_create_ticket_single_contract_creates_and_copies_messages(monkeyp
 
 
 # ---------------------------------------------------------------------------
+# 3.2b — stage 5 multichannel: created tickets are attributed to the actual
+# chat session's channel, never hardcoded to WEB.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel", [TicketChannel.WEB, TicketChannel.EMAIL, TicketChannel.WHATSAPP]
+)
+async def test_create_ticket_uses_the_chat_sessions_own_channel(monkeypatch, channel) -> None:
+    scope = _scope(role=UserRole.TENANT)
+    chat_session = _chat_session(scope, channel=channel)
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    ctx = ChatToolContext(session=session, scope=scope, chat_session=chat_session)
+    contract = _contract(scope)
+    monkeypatch.setattr(
+        chat_tools, "_active_contracts_for_caller", AsyncMock(return_value=[contract])
+    )
+    ticket = _ticket(scope)
+    create_ticket_mock = AsyncMock(return_value=ticket)
+    monkeypatch.setattr(ticket_service, "create_ticket", create_ticket_mock)
+    monkeypatch.setattr(chat_tools, "_copy_chat_messages_to_ticket", AsyncMock())
+
+    await chat_tools.create_ticket(ctx, title="Leak", description="Bathroom leak")
+
+    _, kwargs = create_ticket_mock.call_args
+    assert kwargs["channel"] == channel
+
+
+# ---------------------------------------------------------------------------
 # 3.3 — schedule_visit requires a linked ticket.
 # ---------------------------------------------------------------------------
 
@@ -256,6 +297,34 @@ async def test_escalate_identified_no_ticket_creates_then_escalates(monkeypatch)
     assert chat_session.ticket_id == ticket.id
     assert chat_session.status == ChatSessionStatus.ESCALATED
     assert result["ticket_id"] == str(ticket.id)
+
+
+# ---------------------------------------------------------------------------
+# 3.5b — stage 5 multichannel: escalation tickets are attributed to the
+# actual chat session's channel, never hardcoded to WEB.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "channel", [TicketChannel.WEB, TicketChannel.EMAIL, TicketChannel.WHATSAPP]
+)
+async def test_escalate_to_human_uses_the_chat_sessions_own_channel(monkeypatch, channel) -> None:
+    scope = _scope(role=UserRole.TENANT)
+    chat_session = _chat_session(scope, ticket_id=None, channel=channel)
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    ctx = ChatToolContext(session=session, scope=scope, chat_session=chat_session)
+    ticket = _ticket(scope)
+    create_ticket_mock = AsyncMock(return_value=ticket)
+    monkeypatch.setattr(ticket_service, "create_ticket", create_ticket_mock)
+    monkeypatch.setattr(chat_tools, "_find_general_category_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(TicketRepository, "update", AsyncMock(return_value=ticket))
+
+    await chat_tools.escalate_to_human(ctx, reason="urgent")
+
+    _, create_kwargs = create_ticket_mock.call_args
+    assert create_kwargs["channel"] == channel
 
 
 # ---------------------------------------------------------------------------
