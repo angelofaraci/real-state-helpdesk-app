@@ -56,6 +56,7 @@ from app.services.ticket_service import (
     UrgencyInactiveError,
 )
 from app.workers.classification import enqueue_classification
+from app.workers.email import enqueue_ticket_email_reply
 from app.workers.rag import enqueue_resolved_ticket_embedding
 
 router = APIRouter(prefix="/api/v1/tickets", tags=["tickets"])
@@ -231,6 +232,7 @@ async def list_messages(
 async def create_message(
     ticket_id: UUID,
     payload: MessageCreate,
+    background_tasks: BackgroundTasks,
     scope: OrgScope = Depends(require_org_member),
     session: AsyncSession = Depends(get_session),
 ) -> Message:
@@ -242,9 +244,18 @@ async def create_message(
 
     `based_on_suggestion_id`, when supplied, must reference an existing
     AI-suggestion message on this same ticket (and cannot self-reference);
-    otherwise 422 (`InvalidSuggestionReferenceError`)."""
+    otherwise 422 (`InvalidSuggestionReferenceError`).
+
+    Stage 5 (PR3 — email outbound): when the created message's
+    `outbound_email_required` flag (see `message_service.create_message`'s
+    docstring) is truthy — a staff reply on a `channel=email` ticket — a
+    `send_ticket_email_reply` job is enqueued via `BackgroundTasks` (runs
+    after the response is sent), mirroring `create_ticket`'s
+    `enqueue_classification` hook above. `getattr` defaults to `False`
+    since most other call sites/tests mock `create_message` without setting
+    it."""
     try:
-        return await message_service.create_message(
+        message = await message_service.create_message(
             session,
             scope=scope,
             ticket_id=ticket_id,
@@ -255,6 +266,13 @@ async def create_message(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+
+    if getattr(message, "outbound_email_required", False):
+        background_tasks.add_task(
+            enqueue_ticket_email_reply, message.id, message.ticket_id, scope.organization_id
+        )
+
+    return message
 
 
 @router.get("/{ticket_id}/suggested-response", response_model=SuggestedResponseOut)
