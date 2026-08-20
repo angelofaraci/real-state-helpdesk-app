@@ -13,10 +13,12 @@ from app.api.v1.properties import router as properties_router
 from app.api.v1.tickets import router as tickets_router
 from app.api.v1.urgency_levels import router as urgency_levels_router
 from app.api.v1.users import router as users_router
+from app.api.v1.webhooks_email import router as webhooks_email_router
 from app.core.chat_token import InvalidChatSessionTokenError
 from app.core.config import get_settings
 from app.core.crypto import SecretEncryptionUnavailableError
 from app.core.exceptions import NotFoundError
+from app.core.webhook_signature import InvalidWebhookSignatureError
 from app.services.chat_rate_limit import ChatRateLimitExceededError
 
 
@@ -62,6 +64,17 @@ async def _handle_secret_encryption_unavailable(
     )
 
 
+async def _handle_invalid_webhook_signature(
+    request: Request, exc: InvalidWebhookSignatureError
+) -> JSONResponse:
+    """Map every `InvalidWebhookSignatureError` (stage 5 — multichannel:
+    an inbound webhook's signature does not verify) to 401, for any code
+    path that raises it outside a webhook route's own `Depends` chain
+    (defense in depth, same rationale as every other global handler in
+    this module)."""
+    return JSONResponse(status_code=401, content={"detail": "invalid webhook signature"})
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application instance."""
     settings = get_settings()
@@ -76,6 +89,7 @@ def create_app() -> FastAPI:
     application.include_router(tickets_router)
     application.include_router(knowledge_base_router)
     application.include_router(chat_router)
+    application.include_router(webhooks_email_router)
     application.add_exception_handler(NotFoundError, _handle_not_found)
     application.add_exception_handler(
         ChatRateLimitExceededError, _handle_chat_rate_limit_exceeded
@@ -85,6 +99,9 @@ def create_app() -> FastAPI:
     )
     application.add_exception_handler(
         SecretEncryptionUnavailableError, _handle_secret_encryption_unavailable
+    )
+    application.add_exception_handler(
+        InvalidWebhookSignatureError, _handle_invalid_webhook_signature
     )
     return application
 
