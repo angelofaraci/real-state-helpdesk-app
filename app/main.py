@@ -14,6 +14,7 @@ from app.api.v1.tickets import router as tickets_router
 from app.api.v1.urgency_levels import router as urgency_levels_router
 from app.api.v1.users import router as users_router
 from app.api.v1.webhooks_email import router as webhooks_email_router
+from app.api.v1.webhooks_whatsapp import router as webhooks_whatsapp_router
 from app.core.chat_token import InvalidChatSessionTokenError
 from app.core.config import get_settings
 from app.core.crypto import SecretEncryptionUnavailableError
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     application.include_router(knowledge_base_router)
     application.include_router(chat_router)
     application.include_router(webhooks_email_router)
+    application.include_router(webhooks_whatsapp_router)
     application.add_exception_handler(NotFoundError, _handle_not_found)
     application.add_exception_handler(
         ChatRateLimitExceededError, _handle_chat_rate_limit_exceeded
