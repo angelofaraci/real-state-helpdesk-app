@@ -9,7 +9,7 @@ from __future__ import annotations
 from arq.connections import RedisSettings
 from arq.cron import CronJob
 
-from app.workers import classification, rag
+from app.workers import classification, email, rag
 from app.workers.settings import WorkerSettings
 
 
@@ -39,6 +39,15 @@ def test_embed_resolved_ticket_is_registered_as_a_runnable_function() -> None:
 def test_functions_reference_the_rag_module_embed_resolved_ticket_callable() -> None:
     coroutines = [getattr(entry, "coroutine", entry) for entry in WorkerSettings.functions]
     assert rag.embed_resolved_ticket in coroutines
+
+
+def test_send_ticket_email_reply_is_registered_as_a_runnable_function() -> None:
+    assert "send_ticket_email_reply" in _function_names()
+
+
+def test_functions_reference_the_email_module_send_ticket_email_reply_callable() -> None:
+    coroutines = [getattr(entry, "coroutine", entry) for entry in WorkerSettings.functions]
+    assert email.send_ticket_email_reply in coroutines
 
 
 def test_cron_jobs_include_the_sweep() -> None:
