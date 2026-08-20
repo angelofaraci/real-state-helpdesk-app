@@ -57,7 +57,12 @@ def test_decode_access_token_rejects_expired_token() -> None:
 
 def test_decode_access_token_rejects_tampered_signature() -> None:
     token = encode_access_token(sub=uuid4(), org=uuid4(), role="tenant")
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Flip the second-to-last character, not the last one: base64url's
+    # final character can carry unused padding bits, so toggling it
+    # between adjacent alphabet entries (e.g. "A"/"B") sometimes decodes
+    # to the exact same bytes and makes this test flaky. Every character
+    # before the last one is fully significant.
+    tampered = token[:-2] + ("A" if token[-2] != "A" else "B") + token[-1:]
     with pytest.raises(InvalidAccessTokenError):
         decode_access_token(tampered)
 

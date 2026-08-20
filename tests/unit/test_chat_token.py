@@ -79,7 +79,12 @@ def test_decode_chat_session_token_rejects_tampered_signature() -> None:
     token = encode_chat_session_token(
         session_id=uuid4(), organization_id=uuid4(), user_id=None
     )
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Flip the second-to-last character, not the last one: base64url's
+    # final character can carry unused padding bits, so toggling it
+    # between adjacent alphabet entries (e.g. "A"/"B") sometimes decodes
+    # to the exact same bytes and makes this test flaky. Every character
+    # before the last one is fully significant.
+    tampered = token[:-2] + ("A" if token[-2] != "A" else "B") + token[-1:]
     with pytest.raises(InvalidChatSessionTokenError):
         decode_chat_session_token(tampered)
 
