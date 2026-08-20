@@ -74,3 +74,45 @@ async def test_list_returns_all_organizations() -> None:
     repo = OrganizationRepository(session)
 
     assert await repo.list() == orgs
+
+
+@pytest.mark.asyncio
+async def test_get_by_whatsapp_phone_number_id_returns_the_matching_org() -> None:
+    fake_org = MagicMock(spec=Organization)
+    session = _session_returning(fake_org)
+    repo = OrganizationRepository(session)
+
+    result = await repo.get_by_whatsapp_phone_number_id(session, "1234567890")
+
+    assert result is fake_org
+
+
+@pytest.mark.asyncio
+async def test_get_by_whatsapp_phone_number_id_returns_none_when_no_match() -> None:
+    session = _session_returning(None)
+    repo = OrganizationRepository(session)
+
+    result = await repo.get_by_whatsapp_phone_number_id(session, "0000000000")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_by_support_email_address_returns_the_matching_org() -> None:
+    fake_org = MagicMock(spec=Organization)
+    session = _session_returning(fake_org)
+    repo = OrganizationRepository(session)
+
+    result = await repo.get_by_support_email_address(session, "Support@Acme.example")
+
+    assert result is fake_org
+
+
+@pytest.mark.asyncio
+async def test_get_by_support_email_address_returns_none_when_no_match() -> None:
+    session = _session_returning(None)
+    repo = OrganizationRepository(session)
+
+    result = await repo.get_by_support_email_address(session, "nobody@example.com")
+
+    assert result is None

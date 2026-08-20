@@ -3,10 +3,12 @@
 import uuid
 from datetime import datetime
 
+from typing import Any
+
 from sqlalchemy import CheckConstraint, String, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Index, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -89,6 +91,11 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     closed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # Stage 5 — multichannel (migration 0007). Per-channel bookkeeping
+    # (inbound message ids for dedup, email thread key, etc.) — always
+    # read/written through `app.services.channel_metadata`'s pure helpers,
+    # never mutated in place (see that module's docstring for why).
+    channel_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -119,5 +126,18 @@ class Ticket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "ix_tickets_organization_id_classification_status",
             "organization_id",
             "classification_status",
+        ),
+        # GIN index over the `message_ids` path, for the inbound-message
+        # dedup lookup `app.services.channel_metadata.contains` backs.
+        # `postgresql_ops` (`jsonb_path_ops`) cannot be expressed through
+        # this `text()`-based `Index()` (SQLAlchemy's PG DDL compiler keys
+        # `postgresql_ops` off `expr.key`, which a bare `TextClause` has
+        # none of) — migration 0007 is the actual DDL source of truth and
+        # creates the real index (with `jsonb_path_ops`) via raw SQL; this
+        # declaration only documents its shape at the ORM metadata level.
+        Index(
+            "ix_tickets_channel_metadata_message_ids",
+            text("(channel_metadata -> 'message_ids')"),
+            postgresql_using="gin",
         ),
     )

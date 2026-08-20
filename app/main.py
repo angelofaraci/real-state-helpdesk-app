@@ -15,6 +15,7 @@ from app.api.v1.urgency_levels import router as urgency_levels_router
 from app.api.v1.users import router as users_router
 from app.core.chat_token import InvalidChatSessionTokenError
 from app.core.config import get_settings
+from app.core.crypto import SecretEncryptionUnavailableError
 from app.core.exceptions import NotFoundError
 from app.services.chat_rate_limit import ChatRateLimitExceededError
 
@@ -48,6 +49,19 @@ async def _handle_invalid_chat_session_token(
     return JSONResponse(status_code=401, content={"detail": "could not validate credentials"})
 
 
+async def _handle_secret_encryption_unavailable(
+    request: Request, exc: SecretEncryptionUnavailableError
+) -> JSONResponse:
+    """Map every `SecretEncryptionUnavailableError` (stage 5 —
+    multichannel: no `secret_encryption_key` configured) to 503 — the
+    server cannot service a request that needs to encrypt/decrypt a
+    secret (e.g. persisting a WhatsApp access token) at all, which is a
+    deployment/configuration problem, not a client error."""
+    return JSONResponse(
+        status_code=503, content={"detail": "secret encryption is not available"}
+    )
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application instance."""
     settings = get_settings()
@@ -68,6 +82,9 @@ def create_app() -> FastAPI:
     )
     application.add_exception_handler(
         InvalidChatSessionTokenError, _handle_invalid_chat_session_token
+    )
+    application.add_exception_handler(
+        SecretEncryptionUnavailableError, _handle_secret_encryption_unavailable
     )
     return application
 

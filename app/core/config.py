@@ -66,6 +66,25 @@ class Settings(BaseSettings):
     chat_history_turns: int = 10
     chat_max_tool_rounds: int = 2
 
+    # Stage 5 — multichannel (WhatsApp + email). Every secret defaults to
+    # `None` — encryption/signature verification fails closed
+    # (`app.core.crypto`/`app.core.webhook_signature`) rather than
+    # silently no-op'ing when unconfigured.
+    secret_encryption_key: str | None = None
+    whatsapp_verify_token: str | None = None
+    whatsapp_app_secret: str | None = None
+    whatsapp_api_base_url: str = "https://graph.facebook.com"
+    whatsapp_api_version: str = "v21.0"
+    whatsapp_send_timeout_seconds: float = 10.0
+    whatsapp_session_idle_minutes: int = 1440
+    whatsapp_customer_window_hours: int = 24
+    email_webhook_provider: str = "mailgun"
+    mailgun_signing_key: str | None = None
+    email_webhook_max_age_seconds: int = 300
+    email_thread_subject_match_days: int = 30
+    email_message_id_domain: str = "helpdesk.local"
+    email_from_fallback_address: str = "no-reply@real-estate-helpdesk.local"
+
 
 @lru_cache
 def get_settings() -> Settings:

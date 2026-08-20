@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import UserRole, UserStatus
+from app.models.enums import TicketChannel, UserRole, UserStatus
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -39,6 +39,22 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         server_default=UserStatus.PENDING.value,
     )
+    # Stage 5 — multichannel (migration 0007). Global (NOT org-scoped)
+    # unique phone number in E.164 form — see
+    # `ck_users_phone_number_e164` — used to resolve/auto-provision a
+    # WhatsApp sender's identity (`app.services.channel_identity`).
+    phone_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Set only for a user auto-provisioned by an inbound channel message
+    # (never for a normally-created/invited user, which stays `NULL`) —
+    # see `app.services.channel_identity`.
+    auto_provisioned_channel: Mapped[TicketChannel | None] = mapped_column(
+        SAEnum(
+            TicketChannel,
+            name="ticket_channel",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -49,7 +65,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "organization_id IS NOT NULL OR role = 'admin'",
             name="ck_users_organization_required_unless_admin",
         ),
+        CheckConstraint(
+            r"phone_number IS NULL OR phone_number ~ '^\+[1-9][0-9]{6,14}$'",
+            name="ck_users_phone_number_e164",
+        ),
         Index("ix_users_email_lower_unique", text("lower(email)"), unique=True),
         Index("ix_users_organization_id_role", "organization_id", "role"),
         Index("ix_users_organization_id_status", "organization_id", "status"),
+        Index("ix_users_phone_number_unique", "phone_number", unique=True),
     )

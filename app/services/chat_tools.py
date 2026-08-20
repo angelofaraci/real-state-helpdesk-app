@@ -34,7 +34,6 @@ from app.models.enums import (
     ChatMessageRole,
     ChatSessionStatus,
     ContractStatus,
-    TicketChannel,
     TicketStatus,
 )
 from app.repositories.category_repository import CategoryRepository
@@ -182,7 +181,7 @@ async def create_ticket(ctx: ChatToolContext, *, title: str, description: str) -
         description=description,
         category_id=None,
         urgency_id=None,
-        channel=TicketChannel.WEB,
+        channel=ctx.chat_session.channel,
     )
 
     await _copy_chat_messages_to_ticket(ctx, ticket_id=ticket.id)
@@ -283,7 +282,7 @@ async def escalate_to_human(ctx: ChatToolContext, *, reason: str) -> dict[str, A
             description=reason,
             category_id=category_id,
             urgency_id=None,
-            channel=TicketChannel.WEB,
+            channel=ctx.chat_session.channel,
         )
         ticket_id = ticket.id
         ctx.chat_session.ticket_id = ticket_id
