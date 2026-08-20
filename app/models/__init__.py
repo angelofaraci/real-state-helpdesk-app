@@ -6,6 +6,8 @@ required before Alembic (or any other code) inspects `Base.metadata.tables`.
 
 from app.models.base import Base
 from app.models.category import Category
+from app.models.chat_message import ChatMessage
+from app.models.chat_session import ChatSession
 from app.models.classification import Classification
 from app.models.contract import Contract
 from app.models.invite_token import InviteToken
@@ -23,6 +25,8 @@ from app.models.user import User
 __all__ = [
     "Base",
     "Category",
+    "ChatMessage",
+    "ChatSession",
     "Classification",
     "Contract",
     "InviteToken",

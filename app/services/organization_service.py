@@ -4,6 +4,7 @@ Authorization is enforced at the API layer via `app.api.deps.require_super_admin
 not here — this module only handles persistence and conflict mapping.
 """
 
+import secrets
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -34,7 +35,7 @@ async def create_organization(session: AsyncSession, *, name: str, actor: User) 
     (`OrgScope.for_new_organization` never reads `actor.organization_id`).
     """
     repo = OrganizationRepository(session)
-    org = repo.add(name=name)
+    org = repo.add(name=name, chat_widget_key=secrets.token_urlsafe(32))
     try:
         await session.flush()
     except IntegrityError as exc:

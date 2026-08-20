@@ -57,6 +57,25 @@ class TicketStatus(str, Enum):
     WAITING_ON_CUSTOMER = "waiting_on_customer"
     RESOLVED = "resolved"
     CLOSED = "closed"
+    # Added by migration 0006 (stage 4 — chatbot): a ticket created by the
+    # chatbot when it hands a conversation off to a human agent.
+    ESCALATED = "escalated"
+
+
+class ChatSessionStatus(str, Enum):
+    """Maps to the Postgres enum type `chat_session_status`."""
+
+    ACTIVE = "active"
+    ESCALATED = "escalated"
+    CLOSED = "closed"
+
+
+class ChatMessageRole(str, Enum):
+    """Maps to the Postgres enum type `chat_message_role`."""
+
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
 
 
 class AuthorType(str, Enum):

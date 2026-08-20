@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     rag_chunk_max_tokens: int = 512
     rag_chunk_overlap_tokens: int = 64
 
+    # Stage 4 — chatbot.
+    chat_session_token_ttl_minutes: int = 60
+    chat_rate_limit_per_hour: int = 30
+    chat_history_turns: int = 10
+    chat_max_tool_rounds: int = 2
+
 
 @lru_cache
 def get_settings() -> Settings:
