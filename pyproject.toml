@@ -30,6 +30,7 @@ dependencies = [
     "scikit-learn==1.6.1",
     "numpy>=1.26,<3",
     "tiktoken==0.8.0",
+    "cryptography==44.0.2",
 ]
 
 [project.optional-dependencies]
