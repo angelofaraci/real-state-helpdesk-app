@@ -42,6 +42,7 @@ from app.core.config import get_settings
 from app.services.embeddings import get_embedding_provider
 from app.services.rag_embeddings import get_rag_embedding_provider
 from app.workers.classification import classify_ticket, sweep_pending_classifications
+from app.workers.email import send_ticket_email_reply
 from app.workers.rag import embed_knowledge_document, embed_resolved_ticket
 
 
@@ -63,7 +64,12 @@ async def on_shutdown(ctx: dict[str, Any]) -> None:
 class WorkerSettings:
     """arq `Worker` configuration for the classification worker process."""
 
-    functions = [classify_ticket, embed_knowledge_document, embed_resolved_ticket]
+    functions = [
+        classify_ticket,
+        embed_knowledge_document,
+        embed_resolved_ticket,
+        send_ticket_email_reply,
+    ]
     cron_jobs = [
         cron(sweep_pending_classifications, minute=set(range(0, 60, 5)), run_at_startup=False)
     ]

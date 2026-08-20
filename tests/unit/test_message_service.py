@@ -18,7 +18,7 @@ import pytest
 
 from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
-from app.models.enums import AuthorType, UserRole
+from app.models.enums import AuthorType, TicketChannel, UserRole
 from app.models.message import Message
 from app.models.ticket import Ticket
 from app.repositories.ticket_repository import TicketRepository
@@ -33,7 +33,9 @@ def _scope(**overrides) -> OrgScope:
 
 
 def _ticket(scope: OrgScope, **overrides) -> Ticket:
-    defaults = dict(id=uuid4(), organization_id=scope.organization_id)
+    defaults = dict(
+        id=uuid4(), organization_id=scope.organization_id, channel=TicketChannel.WEB
+    )
     defaults.update(overrides)
     return Ticket(**defaults)
 
@@ -306,3 +308,70 @@ async def test_list_messages_does_not_filter_ai_suggestions_for_staff(monkeypatc
     sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
     where_clause = sql.split("WHERE", 1)[1]
     assert "is_ai_suggestion" not in where_clause
+
+
+# ---------------------------------------------------------------------------
+# Stage 5 (PR3) — `outbound_email_required`, the non-mapped flag `create_
+# message` stashes on the returned `Message` for the API layer to check,
+# mirroring `ticket_service.update_ticket`'s `entered_resolved_or_closed`
+# idiom. Set ONLY when the parent ticket is `channel=email` AND the reply is
+# staff-authored (`AuthorType.AGENT`) — a tenant/owner reply, or any reply on
+# a non-email-channel ticket, never triggers an outbound send.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.AGENT, UserRole.ADMIN])
+async def test_create_message_flags_outbound_email_required_for_staff_reply_on_email_ticket(
+    monkeypatch, role
+) -> None:
+    scope = _scope(role=role)
+    ticket = _ticket(scope, channel=TicketChannel.EMAIL)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    message = await message_service.create_message(
+        session, scope=scope, ticket_id=ticket.id, content="We're sending someone over."
+    )
+
+    assert message.outbound_email_required is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [UserRole.TENANT, UserRole.OWNER])
+async def test_create_message_does_not_flag_outbound_email_for_non_staff_reply(
+    monkeypatch, role
+) -> None:
+    scope = _scope(role=role)
+    ticket = _ticket(scope, channel=TicketChannel.EMAIL)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    message = await message_service.create_message(
+        session, scope=scope, ticket_id=ticket.id, content="Thanks for the update."
+    )
+
+    assert getattr(message, "outbound_email_required", False) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", [TicketChannel.WEB, TicketChannel.WHATSAPP])
+async def test_create_message_does_not_flag_outbound_email_for_staff_reply_on_non_email_ticket(
+    monkeypatch, channel
+) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    ticket = _ticket(scope, channel=channel)
+    monkeypatch.setattr(TicketRepository, "get_or_404", AsyncMock(return_value=ticket))
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    message = await message_service.create_message(
+        session, scope=scope, ticket_id=ticket.id, content="On it."
+    )
+
+    assert getattr(message, "outbound_email_required", False) is False
