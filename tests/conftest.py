@@ -42,9 +42,18 @@ def build_engine() -> AsyncEngine:
     return create_async_engine(settings.database_url, pool_pre_ping=True)
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
-    """Session-scoped async engine, shared by every test in the run."""
+    """Function-scoped async engine, built fresh per test.
+
+    Originally session-scoped, but pytest-asyncio's default fixture loop
+    scope is "function" (see `pyproject.toml`'s
+    `asyncio_default_fixture_loop_scope`), and a session-scoped async
+    fixture cannot depend on a function-scoped `event_loop` — every test
+    using it would fail at setup with a `ScopeMismatch` error before ever
+    reaching a real database. This was never caught earlier because no
+    test actually used this fixture until stage 4's real-Postgres
+    integration tests (see `tests/integration/test_chat_flow.py`)."""
     eng = build_engine()
     yield eng
     await eng.dispose()

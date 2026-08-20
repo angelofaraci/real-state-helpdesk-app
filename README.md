@@ -55,6 +55,22 @@ docker compose up worker
 which is only needed when `EMBEDDING_PROVIDER=local`. If you run with
 `EMBEDDING_PROVIDER=openai`, the `ml` extra is not required.
 
+## Stage 4 — chatbot
+
+A widget-facing chat API lets visitors (anonymous or identified) talk to an
+LLM grounded in the knowledge base, with tool-calling for ticket status
+lookups, ticket creation, visit scheduling, and human escalation (see
+`app.services.chat`/`app.services.chat_tools`). Every turn-taking request
+after session creation authenticates via either a real Bearer access token
+or the `X-Chat-Session` header — the session-scoped token
+`POST /sessions` returns, which must match the `session_id` path segment
+it is used against (see `app.api.deps_chat` for the full resolution
+order):
+
+- `POST /api/v1/chat/sessions` — start a session for a `widget_key`.
+- `POST /api/v1/chat/sessions/{session_id}/messages` — send a visitor turn.
+- `GET /api/v1/chat/sessions/{session_id}/messages` — chronological history.
+
 ### CI and retraining
 
 `.github/workflows/ci.yml` runs the test suite, retrains the stage-2

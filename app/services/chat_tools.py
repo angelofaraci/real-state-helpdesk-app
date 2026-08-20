@@ -210,6 +210,19 @@ async def schedule_visit(
             "error": "no ticket is linked to this chat session yet; "
             "create or escalate a ticket first"
         }
+    # `ticket_id` arrives as parsed from the LLM tool-call's raw JSON
+    # arguments (`app.services.chat.send_message`'s `json.loads(...)`),
+    # which has no native UUID type — it is a plain `str` at this point
+    # despite the `UUID` type hint above (Python does not coerce
+    # arguments to match annotations at call time). Comparing it directly
+    # against `ctx.chat_session.ticket_id` (an actual `UUID` instance)
+    # would always be `False` regardless of value, rejecting every
+    # legitimate call — normalize it first.
+    if not isinstance(ticket_id, UUID):
+        try:
+            ticket_id = UUID(ticket_id)
+        except (TypeError, ValueError):
+            return {"error": "ticket_id is not a valid UUID"}
     if ctx.chat_session.ticket_id != ticket_id:
         return {"error": "ticket_id does not match this chat session's linked ticket"}
 
