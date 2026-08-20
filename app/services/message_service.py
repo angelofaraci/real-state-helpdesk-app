@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.scope import OrgScope
-from app.models.enums import AuthorType, UserRole
+from app.models.enums import AuthorType, TicketChannel, UserRole
 from app.models.message import Message
 from app.repositories.message_repository import MessageRepository
 from app.repositories.ticket_repository import TicketRepository
@@ -117,8 +117,17 @@ async def create_message(
     suggestion it was drafted from (Q1's mechanism). Raises
     `InvalidSuggestionReferenceError` (mapped to 422) if it does not
     resolve to an existing `is_ai_suggestion=True` message on this same
-    ticket, or would self-reference."""
-    await TicketRepository(session, scope).get_or_404(ticket_id)
+    ticket, or would self-reference.
+
+    Stage 5 (PR3 — email outbound): stashes a plain non-mapped
+    `outbound_email_required` flag on the returned `Message` — `True` only
+    when the parent ticket is `channel=email` AND this reply is
+    staff-authored (`AuthorType.AGENT`), mirroring the "stash a flag on the
+    returned ORM object" pattern `ticket_service.update_ticket` already
+    uses for `entered_resolved_or_closed`. The API layer
+    (`app.api.v1.tickets.create_message`) reads it via `getattr(...,
+    False)` to decide whether to enqueue `send_ticket_email_reply`."""
+    ticket = await TicketRepository(session, scope).get_or_404(ticket_id)
 
     author_type = AuthorType.AGENT if scope.role in _STAFF_ROLES else AuthorType.USER
 
@@ -141,4 +150,9 @@ async def create_message(
         based_on_suggestion_id=based_on_suggestion_id,
     )
     await session.flush()
+
+    message.outbound_email_required = (
+        ticket.channel == TicketChannel.EMAIL and author_type == AuthorType.AGENT
+    )
+
     return message
