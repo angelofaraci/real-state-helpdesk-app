@@ -8,15 +8,16 @@ a real (non-anonymous) `user_id` — see `ck_chat_sessions_ticket_requires_user`
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import CheckConstraint, Integer
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Index, text
-from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import ChatSessionStatus
+from app.models.enums import ChatSessionStatus, TicketChannel
 
 
 class ChatSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -51,6 +52,23 @@ class ChatSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_activity_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )
+    # Stage 5 — multichannel (migration 0007). Per-channel bookkeeping
+    # (e.g. the WhatsApp `wa_id`, inbound message ids) — always
+    # read/written through `app.services.channel_metadata`'s pure helpers.
+    channel_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Which channel this session originated on. `NOT NULL` with a `'web'`
+    # server default (migration 0007 backfills every pre-existing row with
+    # zero data migration needed) — every chat session, old or new, always
+    # has exactly one channel.
+    channel: Mapped[TicketChannel] = mapped_column(
+        SAEnum(
+            TicketChannel,
+            name="ticket_channel",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+        server_default=TicketChannel.WEB.value,
+    )
 
     __table_args__ = (
         # A session can only be linked to an escalation ticket if it has a
@@ -63,4 +81,11 @@ class ChatSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_chat_sessions_organization_id", "organization_id"),
         Index("ix_chat_sessions_organization_id_user_id", "organization_id", "user_id"),
         Index("ix_chat_sessions_ticket_id", "ticket_id"),
+        # btree expression index backing the inbound-WhatsApp-message
+        # session lookup (find the active session for `(org, wa_id)`).
+        Index(
+            "ix_chat_sessions_org_wa_id",
+            "organization_id",
+            text("(channel_metadata ->> 'wa_id')"),
+        ),
     )
