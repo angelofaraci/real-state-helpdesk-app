@@ -44,6 +44,7 @@ from app.services.rag_embeddings import get_rag_embedding_provider
 from app.workers.classification import classify_ticket, sweep_pending_classifications
 from app.workers.email import send_ticket_email_reply
 from app.workers.rag import embed_knowledge_document, embed_resolved_ticket
+from app.workers.whatsapp import process_whatsapp_message, send_whatsapp_reply
 
 
 async def on_startup(ctx: dict[str, Any]) -> None:
@@ -69,6 +70,8 @@ class WorkerSettings:
         embed_knowledge_document,
         embed_resolved_ticket,
         send_ticket_email_reply,
+        process_whatsapp_message,
+        send_whatsapp_reply,
     ]
     cron_jobs = [
         cron(sweep_pending_classifications, minute=set(range(0, 60, 5)), run_at_startup=False)
