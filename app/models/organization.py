@@ -1,6 +1,7 @@
 """Organization model — the tenancy root for most other aggregates."""
 
 from sqlalchemy import CheckConstraint, Index, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -33,11 +34,22 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # `ix_organizations_support_email_address_lower_unique` below.
     support_email_address: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Stage 6 — queues + SLA (migration 0008). IANA timezone the org's
+    # business hours are interpreted in, and the weekly business-hours
+    # schedule itself (see `app.core.sla_defaults` for the default shape
+    # every org is bootstrapped with). Both NOT NULL — every org always has
+    # exactly one of each.
+    timezone: Mapped[str] = mapped_column(String, nullable=False)
+    business_hours: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
     __table_args__ = (
         CheckConstraint("btrim(name) <> ''", name="ck_organizations_name_not_blank"),
         CheckConstraint(
             "(whatsapp_phone_number_id IS NULL) = (whatsapp_access_token_encrypted IS NULL)",
             name="ck_organizations_whatsapp_config_complete",
+        ),
+        CheckConstraint(
+            "btrim(timezone) <> ''", name="ck_organizations_timezone_not_blank"
         ),
         Index(
             "ix_organizations_name_lower_unique",

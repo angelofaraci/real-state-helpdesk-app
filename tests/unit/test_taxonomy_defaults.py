@@ -38,3 +38,14 @@ def test_default_urgency_levels_has_the_four_exact_entries() -> None:
         ("Medium", 48, 3),
         ("Low", 120, 4),
     ]
+
+
+def test_default_urgency_levels_respects_business_hours_matches_stage6_design() -> None:
+    """Critical/High are effectively 24/7 (SLA clock never pauses); Medium/Low
+    pause outside business hours — see `app.core.sla_defaults`."""
+    assert [(e.name, e.respects_business_hours) for e in DEFAULT_URGENCY_LEVELS] == [
+        ("Critical", False),
+        ("High", False),
+        ("Medium", True),
+        ("Low", True),
+    ]

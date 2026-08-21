@@ -37,10 +37,16 @@ def test_migration_0007_offline_sql_generation_succeeds() -> None:
 
 def _migration_0007_section(sql: str) -> str:
     """The slice of rendered SQL belonging only to 0006 -> 0007 (earlier
-    migrations legitimately CREATE TYPE for their own new enums)."""
+    migrations legitimately CREATE TYPE for their own new enums, and later
+    migrations may too — the slice must stop at the next `-- Running
+    upgrade` marker, not run to end of file, or a later migration's own
+    `CREATE TYPE` would leak into this section)."""
     marker = "-- Running upgrade 0006 -> 0007"
     assert marker in sql, f"expected marker {marker!r} in rendered SQL"
-    return sql[sql.index(marker) :]
+    start = sql.index(marker)
+    next_marker_start = sql.find("-- Running upgrade", start + len(marker))
+    end = next_marker_start if next_marker_start != -1 else len(sql)
+    return sql[start:end]
 
 
 def test_migration_0007_adds_no_new_postgres_enum_types() -> None:
