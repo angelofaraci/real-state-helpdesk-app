@@ -26,6 +26,13 @@ class UrgencyLevel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
+    # Stage 6 — queues + SLA (migration 0008). Whether this urgency level's
+    # SLA clock pauses outside the organization's business hours (e.g.
+    # Critical/High are typically 24/7 — `False` — while Medium/Low pause
+    # overnight/weekends — `True`). See `app.core.taxonomy_defaults`.
+    respects_business_hours: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
 
     __table_args__ = (
         CheckConstraint("sla_hours > 0", name="ck_urgency_levels_sla_hours_positive"),

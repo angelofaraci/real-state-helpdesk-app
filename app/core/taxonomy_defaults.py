@@ -23,6 +23,10 @@ class UrgencySeed:
     name: str
     sla_hours: int
     sort_order: int
+    # Stage 6 — queues + SLA: whether this level's SLA clock pauses outside
+    # business hours. Critical/High are effectively 24/7 (False); Medium/Low
+    # pause overnight/weekends (True).
+    respects_business_hours: bool
 
 
 DEFAULT_CATEGORIES: tuple[CategorySeed, ...] = (
@@ -35,8 +39,8 @@ DEFAULT_CATEGORIES: tuple[CategorySeed, ...] = (
 )
 
 DEFAULT_URGENCY_LEVELS: tuple[UrgencySeed, ...] = (
-    UrgencySeed("Critical", sla_hours=2, sort_order=1),
-    UrgencySeed("High", sla_hours=24, sort_order=2),
-    UrgencySeed("Medium", sla_hours=48, sort_order=3),
-    UrgencySeed("Low", sla_hours=120, sort_order=4),
+    UrgencySeed("Critical", sla_hours=2, sort_order=1, respects_business_hours=False),
+    UrgencySeed("High", sla_hours=24, sort_order=2, respects_business_hours=False),
+    UrgencySeed("Medium", sla_hours=48, sort_order=3, respects_business_hours=True),
+    UrgencySeed("Low", sla_hours=120, sort_order=4, respects_business_hours=True),
 )

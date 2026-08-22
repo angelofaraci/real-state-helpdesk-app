@@ -91,3 +91,18 @@ class ClassificationStatus(str, Enum):
 
     PENDING = "pending"
     CLASSIFIED = "classified"
+
+
+class SlaEventType(str, Enum):
+    """Maps to the Postgres enum type `sla_event_type`."""
+
+    WARNING = "warning"
+    BREACHED = "breached"
+    RESOLVED = "resolved"
+
+
+class NotificationKind(str, Enum):
+    """Maps to the Postgres enum type `notification_kind`."""
+
+    SLA_WARNING = "sla_warning"
+    SLA_BREACHED = "sla_breached"
