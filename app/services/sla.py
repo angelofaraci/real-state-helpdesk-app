@@ -8,9 +8,10 @@ async/session-touching function here: it loads an org's `timezone`/
 `business_hours` via `OrganizationRepository` and delegates to
 `compute_sla_due_at`.
 
-NOT wired into `ticket_service.py`/`classification.py` yet — that is a
-later PR's job (writer rewiring). This module only proves the compute core
-in isolation.
+Wired into all 3 SLA write points as of stage 6 PR4 (`ticket_service.
+create_ticket`/`update_ticket` and `app.workers.classification.
+classify_ticket`) — see `tests/unit/test_sla_writer_parity.py` for the
+cross-writer identity proof.
 """
 
 from __future__ import annotations
@@ -181,8 +182,8 @@ async def resolve_sla_due_at(
     """Load `organization_id`'s `timezone`/`business_hours` and delegate to
     `compute_sla_due_at` with `urgency`'s `sla_hours`/
     `respects_business_hours`. Raises `NotFoundError` if the org does not
-    exist (via `OrganizationRepository.get_or_404`). NOT wired into any
-    caller yet — see this module's docstring.
+    exist (via `OrganizationRepository.get_or_404`). Called from all 3 SLA
+    write points as of PR4 — see this module's docstring.
     """
     organization = await OrganizationRepository(session).get_or_404(organization_id)
     return compute_sla_due_at(

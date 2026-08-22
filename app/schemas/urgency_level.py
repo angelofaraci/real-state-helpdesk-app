@@ -16,6 +16,10 @@ class UrgencyLevelCreate(BaseModel):
     name: str
     sla_hours: int = Field(gt=0)
     sort_order: int = 0
+    # Stage 6 — queues + SLA: whether this level's SLA clock pauses outside
+    # the organization's business hours. Defaults to `True`, matching the
+    # `urgency_levels.respects_business_hours` column's `server_default`.
+    respects_business_hours: bool = True
 
 
 class UrgencyLevelUpdate(BaseModel):
@@ -23,6 +27,7 @@ class UrgencyLevelUpdate(BaseModel):
     sla_hours: int | None = Field(default=None, gt=0)
     sort_order: int | None = None
     active: bool | None = None
+    respects_business_hours: bool | None = None
 
 
 class UrgencyLevelResponse(BaseModel):
@@ -32,6 +37,7 @@ class UrgencyLevelResponse(BaseModel):
     sla_hours: int
     sort_order: int
     active: bool
+    respects_business_hours: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

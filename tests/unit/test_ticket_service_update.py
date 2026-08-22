@@ -251,13 +251,25 @@ async def test_recategorizing_urgency_only_by_owner_is_forbidden_before_any_look
 
 
 @pytest.mark.asyncio
-async def test_updating_category_and_urgency_marks_human_corrected_and_recomputes_sla() -> None:
+async def test_updating_category_and_urgency_marks_human_corrected_and_recomputes_sla(
+    monkeypatch,
+) -> None:
     scope = _scope(role=UserRole.AGENT)
     created_at = datetime(2026, 1, 1, tzinfo=UTC)
     target = _ticket(scope, created_at=created_at)
     new_urgency = _urgency(scope, sla_hours=12)
     new_category_id = uuid4()
     session = _session_returning_sequence(target, new_urgency, None, target)
+    # PR4: `sla_due_at` now goes through `resolve_sla_due_at` (which would
+    # issue its own `OrganizationRepository` lookup for real) — mocked here
+    # so this test's session sequence/index assertions below stay unchanged;
+    # the wiring itself is covered by
+    # `test_manual_correction_recomputes_sla_via_resolve_sla_due_at`.
+    monkeypatch.setattr(
+        ticket_service,
+        "resolve_sla_due_at",
+        AsyncMock(return_value=created_at + timedelta(hours=12)),
+    )
 
     updated = await ticket_service.update_ticket(
         session,
@@ -393,7 +405,7 @@ async def test_reopen_then_reresolve_flags_again() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_status_in_patch_does_not_flag() -> None:
+async def test_no_status_in_patch_does_not_flag(monkeypatch) -> None:
     scope = _scope(role=UserRole.ADMIN)
     target = _ticket(
         scope, status=TicketStatus.OPEN, urgency_id=uuid4(), created_at=datetime.now(UTC)
@@ -401,6 +413,9 @@ async def test_no_status_in_patch_does_not_flag() -> None:
     existing_urgency = _urgency(scope, id=target.urgency_id, sla_hours=2)
     new_category_id = uuid4()
     session = _session_returning_sequence(target, existing_urgency, None, target)
+    monkeypatch.setattr(
+        ticket_service, "resolve_sla_due_at", AsyncMock(return_value=datetime.now(UTC))
+    )
 
     updated = await ticket_service.update_ticket(
         session, scope=scope, ticket_id=target.id, category_id=new_category_id
@@ -410,7 +425,9 @@ async def test_no_status_in_patch_does_not_flag() -> None:
 
 
 @pytest.mark.asyncio
-async def test_updating_category_only_reuses_the_tickets_existing_urgency_for_sla() -> None:
+async def test_updating_category_only_reuses_the_tickets_existing_urgency_for_sla(
+    monkeypatch,
+) -> None:
     scope = _scope(role=UserRole.ADMIN)
     created_at = datetime(2026, 1, 1, tzinfo=UTC)
     existing_urgency_id = uuid4()
@@ -418,6 +435,11 @@ async def test_updating_category_only_reuses_the_tickets_existing_urgency_for_sl
     existing_urgency = _urgency(scope, id=existing_urgency_id, sla_hours=2)
     new_category_id = uuid4()
     session = _session_returning_sequence(target, existing_urgency, None, target)
+    monkeypatch.setattr(
+        ticket_service,
+        "resolve_sla_due_at",
+        AsyncMock(return_value=created_at + timedelta(hours=2)),
+    )
 
     updated = await ticket_service.update_ticket(
         session, scope=scope, ticket_id=target.id, category_id=new_category_id
@@ -426,3 +448,40 @@ async def test_updating_category_only_reuses_the_tickets_existing_urgency_for_sl
     assert updated.category_id == new_category_id
     assert updated.urgency_id == existing_urgency_id
     assert updated.sla_due_at == created_at + timedelta(hours=2)
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 (PR4) — writer rewiring: manual recategorization must recompute
+# `sla_due_at` via `resolve_sla_due_at` (not an inline
+# `created_at + timedelta(...)`), anchored on `ticket.created_at` — unifying
+# it onto the same code path `create_ticket`/`classify_ticket` now use.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_manual_correction_recomputes_sla_via_resolve_sla_due_at(monkeypatch) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    target = _ticket(scope, created_at=created_at)
+    new_urgency = _urgency(scope, sla_hours=12)
+    new_category_id = uuid4()
+    session = _session_returning_sequence(target, new_urgency, None, target)
+
+    fake_due_at = datetime(2030, 5, 5, tzinfo=UTC)
+    fake_resolve = AsyncMock(return_value=fake_due_at)
+    monkeypatch.setattr(ticket_service, "resolve_sla_due_at", fake_resolve)
+
+    updated = await ticket_service.update_ticket(
+        session,
+        scope=scope,
+        ticket_id=target.id,
+        category_id=new_category_id,
+        urgency_id=new_urgency.id,
+    )
+
+    fake_resolve.assert_awaited_once()
+    _, kwargs = fake_resolve.call_args
+    assert kwargs["from_timestamp"] == created_at
+    assert kwargs["urgency"] is new_urgency
+    assert kwargs["organization_id"] == scope.organization_id
+    assert updated.sla_due_at == fake_due_at

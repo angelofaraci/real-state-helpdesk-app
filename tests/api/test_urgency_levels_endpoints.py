@@ -52,6 +52,7 @@ def _make_urgency(admin, **overrides) -> UrgencyLevel:
         sla_hours=4,
         sort_order=0,
         active=True,
+        respects_business_hours=False,
     )
     defaults.update(overrides)
     urgency = UrgencyLevel(**defaults)

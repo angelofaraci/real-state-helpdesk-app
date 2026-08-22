@@ -41,6 +41,7 @@ from app.services.classifier import (
     TaxonomyOption,
 )
 from app.services.classifier import classify as default_classify
+from app.services.sla import resolve_sla_due_at
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,12 @@ async def classify_ticket(ctx: dict[str, Any], ticket_id: UUID, organization_id:
         ticket.category_id = result.category_id
         ticket.urgency_id = result.urgency_id
         ticket.classification_status = ClassificationStatus.CLASSIFIED
-        ticket.sla_due_at = ticket.created_at + timedelta(hours=urgency_row.sla_hours)
+        ticket.sla_due_at = await resolve_sla_due_at(
+            session,
+            organization_id=organization_id,
+            urgency=urgency_row,
+            from_timestamp=ticket.created_at,
+        )
 
         await ClassificationRepository(session, scope).upsert(
             ticket_id,

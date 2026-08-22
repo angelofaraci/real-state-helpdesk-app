@@ -63,6 +63,26 @@ async def test_create_urgency_level_adds_and_flushes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_urgency_level_passes_through_respects_business_hours() -> None:
+    """Stage 6 (PR4): the schema field is worthless if the service layer
+    silently drops it — must reach the constructed `UrgencyLevel` row."""
+    scope = _scope()
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    urgency = await urgency_level_service.create_urgency_level(
+        session,
+        scope=scope,
+        name="Critical",
+        sla_hours=4,
+        sort_order=1,
+        respects_business_hours=False,
+    )
+
+    assert urgency.respects_business_hours is False
+
+
+@pytest.mark.asyncio
 async def test_create_urgency_level_raises_conflict_on_duplicate_name() -> None:
     session = AsyncMock()
     session.add = MagicMock()
