@@ -10,6 +10,7 @@ from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.classification import Classification
 from app.models.contract import Contract
+from app.models.daily_metric import DailyMetric
 from app.models.invite_token import InviteToken
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_chunk import KnowledgeChunk
@@ -31,6 +32,7 @@ __all__ = [
     "ChatSession",
     "Classification",
     "Contract",
+    "DailyMetric",
     "InviteToken",
     "KnowledgeBase",
     "KnowledgeChunk",

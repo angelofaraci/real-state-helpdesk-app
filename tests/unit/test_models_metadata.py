@@ -29,10 +29,11 @@ EXPECTED_TABLE_NAMES = {
     "chat_messages",
     "sla_events",
     "notifications",
+    "daily_metrics",
 }
 
 
-def test_metadata_contains_exactly_the_eighteen_expected_tables() -> None:
+def test_metadata_contains_exactly_the_nineteen_expected_tables() -> None:
     assert set(Base.metadata.tables.keys()) == EXPECTED_TABLE_NAMES
 
 
