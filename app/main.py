@@ -8,6 +8,7 @@ from app.api.v1.categories import router as categories_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.contracts import router as contracts_router
 from app.api.v1.knowledge_base import router as knowledge_base_router
+from app.api.v1.notifications import router as notifications_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.properties import router as properties_router
 from app.api.v1.tickets import router as tickets_router
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     application.include_router(urgency_levels_router)
     application.include_router(tickets_router)
     application.include_router(knowledge_base_router)
+    application.include_router(notifications_router)
     application.include_router(chat_router)
     application.include_router(webhooks_email_router)
     application.include_router(webhooks_whatsapp_router)
