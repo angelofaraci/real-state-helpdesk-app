@@ -14,9 +14,11 @@ from app.models.invite_token import InviteToken
 from app.models.knowledge_base import KnowledgeBase
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.message import Message
+from app.models.notification import Notification
 from app.models.organization import Organization
 from app.models.property import Property
 from app.models.refresh_token import RefreshToken
+from app.models.sla_event import SlaEvent
 from app.models.ticket import Ticket
 from app.models.ticket_embedding import TicketEmbedding
 from app.models.urgency_level import UrgencyLevel
@@ -33,9 +35,11 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeChunk",
     "Message",
+    "Notification",
     "Organization",
     "Property",
     "RefreshToken",
+    "SlaEvent",
     "Ticket",
     "TicketEmbedding",
     "UrgencyLevel",
