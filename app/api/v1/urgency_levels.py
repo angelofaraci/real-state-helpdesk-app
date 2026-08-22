@@ -45,6 +45,7 @@ async def create_urgency_level(
             name=payload.name,
             sla_hours=payload.sla_hours,
             sort_order=payload.sort_order,
+            respects_business_hours=payload.respects_business_hours,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

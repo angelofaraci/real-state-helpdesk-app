@@ -27,13 +27,24 @@ class ConflictError(Exception):
 
 
 async def create_urgency_level(
-    session: AsyncSession, *, scope: OrgScope, name: str, sla_hours: int, sort_order: int = 0
+    session: AsyncSession,
+    *,
+    scope: OrgScope,
+    name: str,
+    sla_hours: int,
+    sort_order: int = 0,
+    respects_business_hours: bool = True,
 ) -> UrgencyLevel:
     """Create an urgency level in `scope`'s organization. Raises
     `ConflictError` if an urgency level with the same name (case-insensitive)
     already exists in that organization."""
     repo = UrgencyLevelRepository(session, scope)
-    urgency = repo.add(name=name, sla_hours=sla_hours, sort_order=sort_order)
+    urgency = repo.add(
+        name=name,
+        sla_hours=sla_hours,
+        sort_order=sort_order,
+        respects_business_hours=respects_business_hours,
+    )
     try:
         await session.flush()
     except IntegrityError as exc:

@@ -56,6 +56,25 @@ async def test_seed_default_taxonomy_creates_scoped_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_seed_default_taxonomy_wires_respects_business_hours_per_default_seed() -> None:
+    """Stage 6 (PR4): `UrgencySeed.respects_business_hours` must actually
+    reach the constructed `UrgencyLevel` row — Critical/High False,
+    Medium/Low True, per `DEFAULT_URGENCY_LEVELS`."""
+    scope = _scope()
+    session = _RecordingSession()
+
+    await seed_default_taxonomy(session, scope=scope)
+
+    urgency_levels = {
+        row.name: row
+        for row in (call.args[0] for call in session.add.call_args_list)
+        if isinstance(row, UrgencyLevel)
+    }
+    for seed in DEFAULT_URGENCY_LEVELS:
+        assert urgency_levels[seed.name].respects_business_hours == seed.respects_business_hours
+
+
+@pytest.mark.asyncio
 async def test_seed_default_taxonomy_scopes_rows_to_the_passed_organization() -> None:
     """Triangulation: a second, DIFFERENT scope produces rows tagged with
     that scope's own organization_id — proving the org id is not

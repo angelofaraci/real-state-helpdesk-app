@@ -124,7 +124,7 @@ def _urgency(*, organization_id, sla_hours=24, **overrides) -> UrgencyLevel:
 
 
 @pytest.mark.asyncio
-async def test_success_path_classifies_and_commits() -> None:
+async def test_success_path_classifies_and_commits(monkeypatch) -> None:
     organization_id = uuid4()
     ticket = _ticket(organization_id=organization_id)
     category = _category(organization_id=organization_id)
@@ -146,6 +146,16 @@ async def test_success_path_classifies_and_commits() -> None:
         _execute_result(scalars_list=[category]),  # active categories
         _execute_result(scalars_list=[urgency]),  # active urgency levels
         _execute_result(),  # ClassificationRepository.upsert INSERT
+    )
+    # PR4: `sla_due_at` now goes through `resolve_sla_due_at` (which would
+    # issue its own `OrganizationRepository` lookup for real) — mocked here
+    # so this test's session sequence/index assertions below stay unchanged;
+    # the wiring itself is covered by
+    # `test_classify_ticket_calls_resolve_sla_due_at_anchored_on_created_at`.
+    monkeypatch.setattr(
+        worker,
+        "resolve_sla_due_at",
+        AsyncMock(return_value=ticket.created_at + timedelta(hours=8)),
     )
 
     ctx = {
@@ -196,6 +206,61 @@ async def test_get_or_404_is_called_with_for_update() -> None:
     (stmt,), _ = session.execute.call_args_list[0]
     sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
     assert "FOR UPDATE" in sql
+
+
+# ---------------------------------------------------------------------------
+# classify_ticket — SLA writer rewiring (stage 6, PR4): the worker must
+# anchor `sla_due_at` via `resolve_sla_due_at`, not an inline
+# `created_at + timedelta(...)` — unifying it onto the same code path
+# `create_ticket`/`update_ticket` now use.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_classify_ticket_calls_resolve_sla_due_at_anchored_on_created_at(
+    monkeypatch,
+) -> None:
+    organization_id = uuid4()
+    ticket = _ticket(organization_id=organization_id)
+    category = _category(organization_id=organization_id)
+    urgency = _urgency(organization_id=organization_id, sla_hours=8)
+
+    fake_result = ClassificationResult(
+        category_id=category.id,
+        urgency_id=urgency.id,
+        predicted_category=category.name,
+        predicted_urgency=urgency.name,
+        confidence=0.93,
+        urgency_confidence=0.85,
+        model_used="sklearn_v1",
+    )
+    fake_classify = AsyncMock(return_value=fake_result)
+
+    session = _session_returning(
+        _execute_result(scalar=ticket),
+        _execute_result(scalars_list=[category]),
+        _execute_result(scalars_list=[urgency]),
+        _execute_result(),
+    )
+
+    fake_due_at = datetime(2030, 1, 1, tzinfo=UTC)
+    fake_resolve = AsyncMock(return_value=fake_due_at)
+    monkeypatch.setattr(worker, "resolve_sla_due_at", fake_resolve)
+
+    ctx = {
+        "session_factory": _session_factory(session),
+        "embedder": _FakeEmbedder(),
+        "classify": fake_classify,
+    }
+
+    await worker.classify_ticket(ctx, ticket.id, organization_id)
+
+    fake_resolve.assert_awaited_once()
+    _, kwargs = fake_resolve.call_args
+    assert kwargs["from_timestamp"] == ticket.created_at
+    assert kwargs["organization_id"] == organization_id
+    assert kwargs["urgency"] is urgency
+    assert ticket.sla_due_at == fake_due_at
 
 
 # ---------------------------------------------------------------------------

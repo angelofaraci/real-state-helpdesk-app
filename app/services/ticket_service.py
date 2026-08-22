@@ -15,7 +15,7 @@ docstring.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,7 @@ from app.repositories.property_repository import PropertyRepository
 from app.repositories.ticket_repository import TicketRepository
 from app.repositories.urgency_level_repository import UrgencyLevelRepository
 from app.repositories.user_repository import UserRepository
+from app.services.sla import resolve_sla_due_at
 
 # Roles allowed to act as staff for ticket write operations: manual agent
 # assignment (Rule B) and resolving/closing a ticket.
@@ -155,8 +156,11 @@ async def create_ticket(
        otherwise 404 (not 403/422): a tenant creating a ticket against a
        contract that isn't theirs must not learn the contract exists at
        all.
-    8. `sla_due_at` is computed once, from `urgency.sla_hours`, and frozen
-       at creation time — later edits to `urgency.sla_hours` never
+    8. `sla_due_at` is computed once via `resolve_sla_due_at`, anchored on
+       this ticket's own `created_at` (set explicitly in Python — see
+       below — matching `update_ticket`/`classify_ticket`'s anchor
+       convention), and frozen at creation time — later edits to
+       `urgency.sla_hours`/the org's business-hours config never
        retroactively change an already-created ticket's `sla_due_at`,
        since it is a stored timestamp, not a computed column.
 
@@ -216,6 +220,13 @@ async def create_ticket(
     ):
         raise NotFoundError("Contract", contract_id)
 
+    # Set explicitly in Python (not left to the DB `server_default`),
+    # matching the `classification_status` precedent below: the in-memory
+    # ORM instance would otherwise read `created_at=None` until a
+    # flush/refresh, and `resolve_sla_due_at` needs a real anchor right
+    # now, before this instance is ever flushed.
+    anchor = datetime.now(UTC)
+
     fields: dict[str, object] = dict(
         user_id=scope.user_id,
         property_id=property_id,
@@ -228,9 +239,15 @@ async def create_ticket(
         status=TicketStatus.OPEN,
         agent_id=None,
         closed_at=None,
+        created_at=anchor,
     )
     if urgency is not None:
-        fields["sla_due_at"] = datetime.now(UTC) + timedelta(hours=urgency.sla_hours)
+        fields["sla_due_at"] = await resolve_sla_due_at(
+            session,
+            organization_id=scope.organization_id,
+            urgency=urgency,
+            from_timestamp=anchor,
+        )
     else:
         fields["sla_due_at"] = None
         fields["classification_status"] = ClassificationStatus.PENDING
@@ -284,11 +301,11 @@ async def update_ticket(
     human-corrected (`ClassificationRepository.mark_human_corrected` — a
     no-op UPDATE if no such row exists yet, e.g. a ticket that was created
     with explicit taxonomy and never touched by the worker) and recomputes
-    `sla_due_at` from the EFFECTIVE urgency level (the newly supplied
-    `urgency_id`, or the ticket's existing `urgency_id` if only
-    `category_id` was supplied) anchored on `ticket.created_at` — matching
-    the async worker's SLA-anchor convention (`created_at + sla_hours`),
-    NOT `datetime.now()`.
+    `sla_due_at` via `resolve_sla_due_at`, from the EFFECTIVE urgency level
+    (the newly supplied `urgency_id`, or the ticket's existing `urgency_id`
+    if only `category_id` was supplied) anchored on `ticket.created_at` —
+    the same anchor convention `create_ticket`/`classify_ticket` use, NOT
+    `datetime.now()`.
 
     Stage 3 (PR5): stashes a plain non-mapped `entered_resolved_or_closed`
     boolean on the returned instance (same "extra attribute on the ORM
@@ -333,7 +350,12 @@ async def update_ticket(
 
         fields["category_id"] = category_id if category_id is not None else ticket.category_id
         fields["urgency_id"] = effective_urgency_id
-        fields["sla_due_at"] = ticket.created_at + timedelta(hours=urgency.sla_hours)
+        fields["sla_due_at"] = await resolve_sla_due_at(
+            session,
+            organization_id=scope.organization_id,
+            urgency=urgency,
+            from_timestamp=ticket.created_at,
+        )
 
         await ClassificationRepository(session, scope).mark_human_corrected(ticket_id)
 

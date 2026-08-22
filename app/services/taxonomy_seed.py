@@ -32,4 +32,9 @@ async def seed_default_taxonomy(session: AsyncSession, *, scope: OrgScope) -> No
 
     urgency_repo = UrgencyLevelRepository(session, scope)
     for seed in DEFAULT_URGENCY_LEVELS:
-        urgency_repo.add(name=seed.name, sla_hours=seed.sla_hours, sort_order=seed.sort_order)
+        urgency_repo.add(
+            name=seed.name,
+            sla_hours=seed.sla_hours,
+            sort_order=seed.sort_order,
+            respects_business_hours=seed.respects_business_hours,
+        )
