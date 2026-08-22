@@ -12,7 +12,7 @@ import pytest
 
 from app.core.exceptions import NotFoundError
 from app.core.scope import OrgScope
-from app.models.enums import TicketStatus, UserRole
+from app.models.enums import SlaEventType, TicketStatus, UserRole
 from app.models.ticket import Ticket
 from app.models.urgency_level import UrgencyLevel
 from app.models.user import User
@@ -485,3 +485,113 @@ async def test_manual_correction_recomputes_sla_via_resolve_sla_due_at(monkeypat
     assert kwargs["urgency"] is new_urgency
     assert kwargs["organization_id"] == scope.organization_id
     assert updated.sla_due_at == fake_due_at
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 (PR5) — `record_resolved` hook: `update_ticket` synchronously
+# records a `resolved` `sla_events` row (same transaction as the PATCH, no
+# `BackgroundTasks`) at the exact point `entered_resolved_or_closed` fires.
+# Per the brief, `resolved` events never trigger a notification (only
+# `warning`/`breached` do) — `update_ticket` never touches
+# `notification_service` at all, so that's proven by its simple absence
+# from every call in this section.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_transition_into_resolved_synchronously_records_a_resolved_sla_event(
+    monkeypatch,
+) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.OPEN)
+    session = _session_returning_sequence(target, target)
+    fake_record_resolved = AsyncMock(return_value=uuid4())
+    monkeypatch.setattr(
+        ticket_service.sla_event_service, "record_resolved", fake_record_resolved
+    )
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.RESOLVED
+    )
+
+    assert updated.entered_resolved_or_closed is True
+    fake_record_resolved.assert_awaited_once()
+    _, kwargs = fake_record_resolved.call_args
+    assert kwargs["scope"] is scope
+    assert kwargs["ticket_id"] == target.id
+    assert kwargs["sla_due_at"] == updated.sla_due_at
+
+
+@pytest.mark.asyncio
+async def test_transition_into_closed_synchronously_records_a_resolved_sla_event(
+    monkeypatch,
+) -> None:
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.OPEN)
+    session = _session_returning_sequence(target, target)
+    fake_record_resolved = AsyncMock(return_value=uuid4())
+    monkeypatch.setattr(
+        ticket_service.sla_event_service, "record_resolved", fake_record_resolved
+    )
+
+    await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.CLOSED
+    )
+
+    fake_record_resolved.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unrelated_patch_on_an_already_resolved_ticket_does_not_record_an_sla_event(
+    monkeypatch,
+) -> None:
+    scope = _scope(role=UserRole.ADMIN)
+    target = _ticket(scope, status=TicketStatus.RESOLVED)
+    agent = _user(scope, role=UserRole.AGENT)
+    session = _session_returning_sequence(target, agent, target)
+    fake_record_resolved = AsyncMock(return_value=uuid4())
+    monkeypatch.setattr(
+        ticket_service.sla_event_service, "record_resolved", fake_record_resolved
+    )
+
+    updated = await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, agent_id=agent.id
+    )
+
+    assert updated.entered_resolved_or_closed is False
+    fake_record_resolved.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reopen_then_reresolve_records_two_distinct_resolved_sla_events() -> None:
+    """End-to-end proof (through the real, non-mocked
+    `sla_event_service.record_resolved` — NOT monkeypatched here) that
+    decision #5's "`resolved` may repeat" semantics actually hold through
+    `update_ticket`'s hook: resolve -> reopen -> re-resolve records TWO
+    distinct `resolved` `sla_events` inserts, never short-circuited by any
+    conflict handling (matching `test_sla_event_service`'s isolated proof
+    of the same behavior, but exercised through the real service call
+    chain this time)."""
+    scope = _scope(role=UserRole.AGENT)
+    target = _ticket(scope, status=TicketStatus.OPEN)
+    session = _session_returning_sequence(target, target, target, target, target, target)
+
+    await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.RESOLVED
+    )
+    await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.OPEN
+    )
+    await ticket_service.update_ticket(
+        session, scope=scope, ticket_id=target.id, status=TicketStatus.RESOLVED
+    )
+
+    assert session.add.call_count == 2
+    first_event = session.add.call_args_list[0].args[0]
+    second_event = session.add.call_args_list[1].args[0]
+    assert first_event is not second_event
+    assert first_event.event == SlaEventType.RESOLVED
+    assert second_event.event == SlaEventType.RESOLVED
+    assert first_event.ticket_id == target.id
+    assert second_event.ticket_id == target.id
+    assert session.flush.await_count == 2

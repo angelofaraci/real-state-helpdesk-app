@@ -37,6 +37,7 @@ from app.repositories.property_repository import PropertyRepository
 from app.repositories.ticket_repository import TicketRepository
 from app.repositories.urgency_level_repository import UrgencyLevelRepository
 from app.repositories.user_repository import UserRepository
+from app.services import sla_event_service
 from app.services.sla import resolve_sla_due_at
 
 # Roles allowed to act as staff for ticket write operations: manual agent
@@ -316,6 +317,14 @@ async def update_ticket(
     the new one), so the API route layer knows whether to enqueue
     `embed_resolved_ticket` without re-firing on an unrelated PATCH to an
     already-resolved/closed ticket or on re-sending the same status.
+
+    Stage 6 (PR5): at that exact same transition edge, synchronously calls
+    `sla_event_service.record_resolved` (same transaction as this PATCH,
+    no `BackgroundTasks`) to record a `resolved` `sla_events` audit row.
+    Unlike `warning`/`breached`, `resolved` is not subject to any DB-level
+    idempotency guard (see `SlaEvent`'s docstring) and never triggers a
+    notification — `notification_service` is never imported or called
+    from this module at all.
     """
     if agent_id is not None and scope.role not in _STAFF_ROLES:
         raise ForbiddenError("only agents/admins may assign a ticket to an agent")
@@ -371,5 +380,18 @@ async def update_ticket(
         and status in (TicketStatus.RESOLVED, TicketStatus.CLOSED)
         and previous_status != status
     )
+
+    # Stage 6 (PR5): synchronously record a `resolved` `sla_events` row at
+    # the exact same transition edge `entered_resolved_or_closed` flags —
+    # same transaction as this PATCH, no `BackgroundTasks`. `resolved` is
+    # deliberately excluded from `ux_sla_events_ticket_event_once` (see
+    # `SlaEvent`'s docstring), so a reopen/re-resolve cycle records it
+    # again each time, with no conflict handling. No notification is ever
+    # sent for a `resolved` event (only `warning`/`breached` notify,
+    # `notification_service` is never touched from this function at all).
+    if updated.entered_resolved_or_closed:
+        await sla_event_service.record_resolved(
+            session, scope=scope, ticket_id=updated.id, sla_due_at=updated.sla_due_at
+        )
 
     return updated
