@@ -1,5 +1,6 @@
 """Unit tests for `app.services.notification_service` — `resolve_recipients`
-and `fan_out` (stage 6, PR5).
+and `fan_out` (stage 6, PR5), plus `list_notifications`/`mark_read` (stage 6,
+PR7b — the notifications API's service-layer backing).
 
 RESOLVED decision (encoded exactly): the SLA warning/breach recipient set
 is every `ACTIVE` `role=ADMIN` user in the ticket's organization, PLUS the
@@ -14,12 +15,15 @@ already established by `tests/unit/test_ticket_service_update.py`.
 """
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.exceptions import NotFoundError as CoreNotFoundError
 from app.core.scope import OrgScope
 from app.models.enums import NotificationKind, UserRole, UserStatus
+from app.models.notification import Notification
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.services import notification_service
@@ -53,6 +57,23 @@ def _ticket(scope: OrgScope, **overrides) -> Ticket:
     )
     defaults.update(overrides)
     return Ticket(**defaults)
+
+
+def _notification(scope: OrgScope, **overrides) -> Notification:
+    defaults = dict(
+        id=uuid.uuid4(),
+        organization_id=scope.organization_id,
+        user_id=scope.user_id,
+        ticket_id=None,
+        sla_event_id=None,
+        kind=NotificationKind.SLA_WARNING,
+        title="SLA warning",
+        body=None,
+        sent_at=datetime(2024, 1, 1, tzinfo=UTC),
+        read_at=None,
+    )
+    defaults.update(overrides)
+    return Notification(**defaults)
 
 
 def _scalars_result(items: list[object]) -> MagicMock:
@@ -275,3 +296,105 @@ async def test_fan_out_breached_kind_uses_breached_copy(monkeypatch) -> None:
     (notification,), _kwargs = session.add.call_args
     assert notification.kind == NotificationKind.SLA_BREACHED
     assert "breach" in notification.title.lower()
+
+
+# ---------------------------------------------------------------------------
+# list_notifications (stage 6, PR7b)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_notifications_returns_items_and_total() -> None:
+    scope = _scope()
+    notification_1 = _notification(scope)
+    notification_2 = _notification(scope)
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 2
+    session = _session(count_result, _scalars_result([notification_1, notification_2]))
+
+    items, total = await notification_service.list_notifications(
+        session, scope=scope, limit=20, offset=0
+    )
+
+    assert items == [notification_1, notification_2]
+    assert total == 2
+
+
+@pytest.mark.asyncio
+async def test_list_notifications_applies_limit_and_offset_to_the_page_query() -> None:
+    scope = _scope()
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 0
+    session = _session(count_result, _scalars_result([]))
+
+    await notification_service.list_notifications(session, scope=scope, limit=5, offset=10)
+
+    (page_stmt,), _kwargs = session.execute.call_args_list[1]
+    sql = str(page_stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "LIMIT 5" in sql
+    assert "OFFSET 10" in sql
+
+
+@pytest.mark.asyncio
+async def test_list_notifications_scopes_the_page_query_to_the_recipient() -> None:
+    """`list_notifications` must build its page query on top of
+    `NotificationRepository.for_recipient` — never a raw scoped query that
+    duplicates its cross-user filtering."""
+    scope = _scope()
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 0
+    session = _session(count_result, _scalars_result([]))
+
+    await notification_service.list_notifications(session, scope=scope, limit=20, offset=0)
+
+    (page_stmt,), _kwargs = session.execute.call_args_list[1]
+    sql = str(page_stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "notifications.user_id" in sql
+    assert scope.user_id.hex in sql
+    assert scope.organization_id.hex in sql
+
+
+# ---------------------------------------------------------------------------
+# mark_read (stage 6, PR7b)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_read_sets_read_at_when_currently_unread() -> None:
+    scope = _scope()
+    notification = _notification(scope, read_at=None)
+    session = _session(_scalar_result(notification))
+
+    result = await notification_service.mark_read(
+        session, scope=scope, notification_id=notification.id
+    )
+
+    assert result.read_at is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_read_is_idempotent_and_never_overwrites_an_existing_read_at() -> None:
+    scope = _scope()
+    already_read_at = datetime(2024, 1, 1, tzinfo=UTC)
+    notification = _notification(scope, read_at=already_read_at)
+    session = _session(_scalar_result(notification))
+
+    result = await notification_service.mark_read(
+        session, scope=scope, notification_id=notification.id
+    )
+
+    assert result.read_at == already_read_at
+
+
+@pytest.mark.asyncio
+async def test_mark_read_raises_not_found_when_not_visible_to_the_scope() -> None:
+    """Covers both cross-user and cross-org invisibility in one place:
+    `for_recipient` structurally excludes both, so the mocked lookup
+    returning `None` stands in for either case."""
+    scope = _scope()
+    session = _session(_scalar_result(None))
+
+    with pytest.raises(CoreNotFoundError):
+        await notification_service.mark_read(
+            session, scope=scope, notification_id=uuid.uuid4()
+        )
