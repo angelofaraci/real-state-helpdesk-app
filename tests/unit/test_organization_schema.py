@@ -18,7 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.organization import Organization
-from app.schemas.organization import OrganizationResponse, OrganizationUpdate
+from app.schemas.organization import OrganizationCreate, OrganizationResponse, OrganizationUpdate
 
 
 def _make_org(**overrides) -> Organization:
@@ -106,3 +106,67 @@ def test_organization_response_exposes_whatsapp_phone_number_id_and_support_emai
 
     assert response.whatsapp_phone_number_id == "1234567890"
     assert response.support_email_address == "support@acme.example"
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — queues + SLA (PR7a): timezone/business_hours validators
+# ---------------------------------------------------------------------------
+
+
+def test_organization_create_defaults_timezone_and_business_hours_to_none() -> None:
+    """`None` on `OrganizationCreate` means "let the service apply the
+    platform default" — see `organization_service.create_organization`."""
+    create = OrganizationCreate(name="Acme Corp")
+
+    assert create.timezone is None
+    assert create.business_hours is None
+
+
+def test_organization_create_accepts_a_valid_iana_timezone() -> None:
+    create = OrganizationCreate(name="Acme Corp", timezone="Europe/Madrid")
+
+    assert create.timezone == "Europe/Madrid"
+
+
+def test_organization_create_rejects_an_invalid_iana_timezone() -> None:
+    with pytest.raises(ValidationError):
+        OrganizationCreate(name="Acme Corp", timezone="Not/A/Zone")
+
+
+def test_organization_create_accepts_valid_business_hours() -> None:
+    hours = {"mon": [["09:00", "18:00"]]}
+    create = OrganizationCreate(name="Acme Corp", business_hours=hours)
+
+    assert create.business_hours == hours
+
+
+def test_organization_create_rejects_malformed_business_hours() -> None:
+    """Proves the schema validator delegates to
+    `app.services.sla.parse_business_hours` rather than reimplementing its
+    rules — see `tests/unit/test_sla.py`'s `parse_business_hours` section
+    for the exhaustive set of rejected shapes; not duplicated here."""
+    with pytest.raises(ValidationError):
+        OrganizationCreate(name="Acme Corp", business_hours={"monday": [["09:00", "18:00"]]})
+
+
+def test_organization_update_accepts_a_valid_iana_timezone() -> None:
+    update = OrganizationUpdate(timezone="Europe/Madrid")
+
+    assert update.timezone == "Europe/Madrid"
+
+
+def test_organization_update_rejects_an_invalid_iana_timezone() -> None:
+    with pytest.raises(ValidationError):
+        OrganizationUpdate(timezone="Not/A/Zone")
+
+
+def test_organization_update_accepts_valid_business_hours() -> None:
+    hours = {"mon": [["09:00", "18:00"]]}
+    update = OrganizationUpdate(business_hours=hours)
+
+    assert update.business_hours == hours
+
+
+def test_organization_update_rejects_malformed_business_hours() -> None:
+    with pytest.raises(ValidationError):
+        OrganizationUpdate(business_hours={"monday": [["09:00", "18:00"]]})
