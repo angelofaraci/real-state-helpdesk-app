@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.config import get_settings
 from app.services.embeddings import get_embedding_provider
 from app.services.rag_embeddings import get_rag_embedding_provider
+from app.workers.analytics import rollup_daily_metrics
 from app.workers.classification import classify_ticket, sweep_pending_classifications
 from app.workers.email import send_ticket_email_reply
 from app.workers.rag import embed_knowledge_document, embed_resolved_ticket
@@ -77,6 +78,10 @@ class WorkerSettings:
     cron_jobs = [
         cron(sweep_pending_classifications, minute=set(range(0, 60, 5)), run_at_startup=False),
         cron(monitor_sla, minute=set(range(0, 60, 5)), run_at_startup=False),
+        # Stage 7 — analytics, PR3. Nightly at 00:30 UTC, well clear of the
+        # top-of-hour 5-minute cadence the two jobs above run on — recomputes
+        # the last `LOOKBACK_DAYS` completed org-local days for every org.
+        cron(rollup_daily_metrics, hour={0}, minute={30}, run_at_startup=False),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     on_startup = staticmethod(on_startup)
