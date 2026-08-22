@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.core import sla_defaults
 from app.core.scope import OrgScope
 from app.models.enums import UserRole
 from app.models.organization import Organization
@@ -149,6 +150,50 @@ async def test_create_organization_generates_a_unique_chat_widget_key() -> None:
     assert org_a.chat_widget_key
     assert org_b.chat_widget_key
     assert org_a.chat_widget_key != org_b.chat_widget_key
+
+
+@pytest.mark.asyncio
+async def test_create_organization_defaults_timezone_and_business_hours_when_absent() -> None:
+    """Stage 6 — queues + SLA (PR7a): the service explicitly substitutes
+    `app.core.sla_defaults` when the caller does not supply a
+    timezone/business_hours, rather than relying purely on the DB
+    `server_default` — mirrors migration 0008's intent but makes it
+    explicit and testable at the service layer."""
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    with patch(
+        "app.services.organization_service.taxonomy_seed.seed_default_taxonomy",
+        AsyncMock(),
+    ):
+        org = await organization_service.create_organization(
+            session, name="Acme Corp", actor=_super_admin()
+        )
+
+    assert org.timezone == sla_defaults.DEFAULT_TIMEZONE
+    assert org.business_hours == sla_defaults.DEFAULT_BUSINESS_HOURS
+
+
+@pytest.mark.asyncio
+async def test_create_organization_honors_an_explicit_timezone_and_business_hours() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    custom_hours = {"mon": [["08:00", "12:00"]]}
+
+    with patch(
+        "app.services.organization_service.taxonomy_seed.seed_default_taxonomy",
+        AsyncMock(),
+    ):
+        org = await organization_service.create_organization(
+            session,
+            name="Acme Corp",
+            actor=_super_admin(),
+            timezone="Europe/Madrid",
+            business_hours=custom_hours,
+        )
+
+    assert org.timezone == "Europe/Madrid"
+    assert org.business_hours == custom_hours
 
 
 @pytest.mark.asyncio

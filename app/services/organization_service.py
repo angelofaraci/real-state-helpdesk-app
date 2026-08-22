@@ -11,6 +11,7 @@ from pydantic import SecretStr
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import sla_defaults
 from app.core.crypto import encrypt_secret
 from app.core.scope import OrgScope
 from app.models.organization import Organization
@@ -42,7 +43,14 @@ class ConflictError(Exception):
     `ix_organizations_support_email_address_lower_unique`)."""
 
 
-async def create_organization(session: AsyncSession, *, name: str, actor: User) -> Organization:
+async def create_organization(
+    session: AsyncSession,
+    *,
+    name: str,
+    actor: User,
+    timezone: str | None = None,
+    business_hours: dict | None = None,
+) -> Organization:
     """Create a new organization and seed its default taxonomy (6 default
     categories + 4 default urgency levels). Raises `ConflictError` if an
     organization with the same name (case-insensitive) already exists —
@@ -52,9 +60,23 @@ async def create_organization(session: AsyncSession, *, name: str, actor: User) 
     `actor` MUST be the super-admin principal creating this organization;
     it is used only to build the `OrgScope` that seeds the taxonomy
     (`OrgScope.for_new_organization` never reads `actor.organization_id`).
+
+    Stage 6 — queues + SLA (PR7a): `timezone`/`business_hours` default
+    explicitly to `app.core.sla_defaults.DEFAULT_TIMEZONE`/
+    `DEFAULT_BUSINESS_HOURS` when the caller (`OrganizationCreate` leaves
+    them `None`) does not supply either — mirrors migration 0008's DB
+    `server_default` intent, but makes the default explicit and testable
+    at the service layer rather than relying on it alone.
     """
     repo = OrganizationRepository(session)
-    org = repo.add(name=name, chat_widget_key=secrets.token_urlsafe(32))
+    org = repo.add(
+        name=name,
+        chat_widget_key=secrets.token_urlsafe(32),
+        timezone=timezone if timezone is not None else sla_defaults.DEFAULT_TIMEZONE,
+        business_hours=(
+            business_hours if business_hours is not None else sla_defaults.DEFAULT_BUSINESS_HOURS
+        ),
+    )
     try:
         await session.flush()
     except IntegrityError as exc:

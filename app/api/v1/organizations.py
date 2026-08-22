@@ -37,7 +37,11 @@ async def create_organization(
 ) -> Organization:
     try:
         return await organization_service.create_organization(
-            session, name=payload.name, actor=principal
+            session,
+            name=payload.name,
+            actor=principal,
+            timezone=payload.timezone,
+            business_hours=payload.business_hours,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
