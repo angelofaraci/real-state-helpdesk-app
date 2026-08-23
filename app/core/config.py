@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     worker_metrics_port: int = 9200
 
+    # Stage 8 — devops (PR8). Nightly `pg_dump` backup upload target. `None`
+    # (the default, e.g. local dev) means the backup job no-ops cleanly
+    # rather than raising — not every environment needs backups configured.
+    # Retention (14 most recent daily backups) is enforced by an S3
+    # lifecycle rule on the `pg_dump/` key prefix (Terraform, PR9/10), NOT
+    # application code.
+    backup_s3_bucket: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
