@@ -119,7 +119,7 @@ async def test_reissue_invite_deletes_prior_token_and_sends_a_new_one(
     result = await user_service.reissue_invite(session, admin=admin, user_id=target.id)
 
     assert result is target
-    repo_instance.delete_unused_for_user.assert_awaited_once_with(target.id)
+    repo_instance.revoke_unused_for_user.assert_awaited_once_with(target.id)
     repo_instance.issue.assert_awaited_once()
     mock_mailer.assert_awaited_once()
 

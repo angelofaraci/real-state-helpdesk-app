@@ -79,7 +79,7 @@ async def invite_user(
 
 
 async def reissue_invite(session: AsyncSession, *, admin: User, user_id: UUID) -> User:
-    """Delete any outstanding invite for `user_id` and issue + send a
+    """Revoke any outstanding invite for `user_id` and issue + send a
     fresh one.
 
     Raises `ForbiddenError` unless `admin` is an org-scoped admin,
@@ -97,7 +97,7 @@ async def reissue_invite(session: AsyncSession, *, admin: User, user_id: UUID) -
         raise ConflictError("already_active")
 
     repo = InviteTokenRepository(session)
-    await repo.delete_unused_for_user(user.id)
+    await repo.revoke_unused_for_user(user.id)
     await _issue_and_send_invite(session, user, repo=repo)
     return user
 

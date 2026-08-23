@@ -5,17 +5,19 @@ that is introduced in a later work unit. Invite tokens have no
 organization scoping of their own; they are keyed by user.
 
 "At most one outstanding invite per user" is enforced at the database
-level by a partial unique index on `(user_id) WHERE used_at IS NULL`
-(see `app/alembic/versions/0001_initial.py`). A second `issue()` call for a
-user that already has a pending invite raises `IntegrityError`, which the
-caller (the invite-reissue flow) handles by deleting the prior unused row
-first via `delete_unused_for_user`.
+level by a partial unique index on `(user_id) WHERE used_at IS NULL AND
+revoked_at IS NULL` (see `app/alembic/versions/0001_initial.py`, widened by
+`app/alembic/versions/0011_invite_token_revoked_at.py`). A second `issue()`
+call for a user that already has a pending invite raises `IntegrityError`,
+which the caller (the invite-reissue flow) handles by revoking the prior
+unused row first via `revoke_unused_for_user` — a soft UPDATE rather than a
+hard DELETE, so the prior row is preserved for audit purposes.
 """
 
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import new_opaque_token, sha256_hash
@@ -68,14 +70,23 @@ class InviteTokenRepository:
         token.used_at = datetime.now(UTC)
         await self._session.flush()
 
-    async def delete_unused_for_user(self, user_id: UUID) -> None:
-        """Delete any still-unused invite token row for `user_id`.
+    async def revoke_unused_for_user(self, user_id: UUID) -> None:
+        """Revoke (not delete) any still-unused, still-unrevoked invite
+        token row for `user_id`.
 
         Used by the invite-reissue flow to clear the prior outstanding
         invite before issuing a new one, since the partial unique index
-        allows at most one unused row per user at a time.
+        allows at most one row with `used_at IS NULL AND revoked_at IS
+        NULL` per user at a time. Sets `revoked_at` instead of deleting the
+        row so the prior invite stays in the table for audit purposes.
         """
-        stmt = delete(InviteToken).where(
-            InviteToken.user_id == user_id, InviteToken.used_at.is_(None)
+        stmt = (
+            update(InviteToken)
+            .where(
+                InviteToken.user_id == user_id,
+                InviteToken.used_at.is_(None),
+                InviteToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
         )
         await self._session.execute(stmt)
