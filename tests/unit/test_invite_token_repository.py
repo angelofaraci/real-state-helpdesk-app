@@ -86,13 +86,21 @@ async def test_mark_used_sets_used_at_and_flushes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_unused_for_user_executes_delete_scoped_to_user_and_unused() -> None:
+async def test_revoke_unused_for_user_executes_update_scoped_to_user_unused_unrevoked() -> None:
     session = AsyncMock()
     repo = InviteTokenRepository(session)
     user_id = uuid4()
 
-    await repo.delete_unused_for_user(user_id)
+    await repo.revoke_unused_for_user(user_id)
 
     session.execute.assert_awaited_once()
     stmt = session.execute.call_args.args[0]
+    # Must be an UPDATE (not a DELETE) — revoke-not-delete preserves the row
+    # for audit purposes instead of hard-deleting it.
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert compiled.startswith("UPDATE invite_tokens")
     assert stmt.table.name == "invite_tokens"
+    assert "invite_tokens.user_id" in compiled
+    assert "invite_tokens.used_at IS NULL" in compiled
+    assert "invite_tokens.revoked_at IS NULL" in compiled
+    assert "invite_tokens.revoked_at=" in compiled or "SET revoked_at=" in compiled

@@ -115,15 +115,19 @@ async def accept_invite(
     mark them active, consume the invite token, and issue a fresh
     access/refresh pair.
 
-    Every failure (unknown token, already-used token, expired token, or a
-    token whose user is no longer `pending`) raises the same
-    `InviteAcceptError` with an identical message, so the response never
-    leaks which of those cases occurred.
+    Every failure (unknown token, already-used token, revoked token,
+    expired token, or a token whose user is no longer `pending`) raises the
+    same `InviteAcceptError` with an identical message, so the response
+    never leaks which of those cases occurred.
     """
     invite_repo = InviteTokenRepository(session)
     token_row = await invite_repo.consume(raw_token)
 
-    if token_row is None or token_row.used_at is not None:
+    if (
+        token_row is None
+        or token_row.used_at is not None
+        or token_row.revoked_at is not None
+    ):
         raise InviteAcceptError(_GENERIC_INVITE_FAILURE)
 
     if token_row.expires_at < datetime.now(UTC):

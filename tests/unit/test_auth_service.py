@@ -232,6 +232,7 @@ def _make_invite_token_row(**overrides):
     defaults = dict(
         user_id=uuid4(),
         used_at=None,
+        revoked_at=None,
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     defaults.update(overrides)
@@ -281,6 +282,22 @@ async def test_accept_invite_rejects_an_already_used_token(_mock_invite_repo) ->
         await auth_service.accept_invite(
             session, raw_token="reused-token", new_password="a-strong-password"
         )
+
+
+@pytest.mark.asyncio
+async def test_accept_invite_rejects_a_revoked_token(_mock_invite_repo) -> None:
+    token_row = _make_invite_token_row(revoked_at=datetime.now(UTC))
+    _mock_invite_repo.consume.return_value = token_row
+    session = AsyncMock()
+
+    with pytest.raises(InviteAcceptError) as exc_info:
+        await auth_service.accept_invite(
+            session, raw_token="revoked-token", new_password="a-strong-password"
+        )
+
+    # Same generic message as every other invite-acceptance failure — no
+    # new user-facing differentiation for revoked tokens.
+    assert str(exc_info.value) == auth_service._GENERIC_INVITE_FAILURE
 
 
 @pytest.mark.asyncio
