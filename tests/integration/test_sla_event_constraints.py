@@ -25,39 +25,121 @@ exists.
 """
 
 import secrets
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import NotificationKind, UserRole, UserStatus
+from app.models.enums import NotificationKind, SlaEventType, UserRole, UserStatus
 from app.models.notification import Notification
 from app.models.organization import Organization
+from app.models.sla_event import SlaEvent
+from app.models.ticket import Ticket
 from app.models.user import User
 
 
-@pytest.mark.skip(
-    reason="Requires a live Postgres instance (see docker-compose.yml); "
-    "not reachable in CI (no Postgres service configured). Run manually "
-    "with `docker compose up -d db && pytest tests/integration -m ''`."
-)
-async def test_duplicate_sla_warning_event_for_the_same_ticket_is_rejected() -> None:
+async def _make_org(db_session: AsyncSession) -> Organization:
+    org = Organization(
+        name=f"Test Org {uuid4()}",
+        chat_widget_key=secrets.token_urlsafe(16),
+        timezone="UTC",
+    )
+    db_session.add(org)
+    await db_session.flush()
+    return org
+
+
+async def _make_ticket(db_session: AsyncSession, org: Organization) -> Ticket:
+    user = User(
+        organization_id=org.id,
+        name="Test User",
+        email=f"{uuid4()}@example.com",
+        role=UserRole.TENANT,
+        password_hash="not-a-real-hash",
+        status=UserStatus.ACTIVE,
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    ticket = Ticket(
+        organization_id=org.id,
+        user_id=user.id,
+        title="Test ticket",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    return ticket
+
+
+async def test_duplicate_sla_warning_event_for_the_same_ticket_is_rejected(
+    db_session: AsyncSession,
+) -> None:
     """Inserting a second `SlaEvent(ticket_id=X, event='warning')` row for
     a ticket that already has one must raise `IntegrityError` against the
     real `ux_sla_events_ticket_event_once` partial unique index."""
+    org = await _make_org(db_session)
+    ticket = await _make_ticket(db_session, org)
+
+    db_session.add(
+        SlaEvent(
+            organization_id=org.id,
+            ticket_id=ticket.id,
+            event=SlaEventType.WARNING,
+            occurred_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+    db_session.add(
+        SlaEvent(
+            organization_id=org.id,
+            ticket_id=ticket.id,
+            event=SlaEventType.WARNING,
+            occurred_at=datetime.now(UTC),
+        )
+    )
+    with pytest.raises(IntegrityError, match="ux_sla_events_ticket_event_once"):
+        await db_session.flush()
 
 
-@pytest.mark.skip(
-    reason="Requires a live Postgres instance (see docker-compose.yml); "
-    "not reachable in CI (no Postgres service configured). Run manually "
-    "with `docker compose up -d db && pytest tests/integration -m ''`."
-)
-async def test_repeated_resolved_events_for_the_same_ticket_are_allowed() -> None:
+async def test_repeated_resolved_events_for_the_same_ticket_are_allowed(
+    db_session: AsyncSession,
+) -> None:
     """Two `SlaEvent(ticket_id=X, event='resolved')` rows for the same
     ticket must both insert successfully — `resolved` is deliberately
     excluded from the partial unique index's predicate so a ticket's
     reopen/re-resolve cycle can record it repeatedly."""
+    org = await _make_org(db_session)
+    ticket = await _make_ticket(db_session, org)
+
+    db_session.add(
+        SlaEvent(
+            organization_id=org.id,
+            ticket_id=ticket.id,
+            event=SlaEventType.RESOLVED,
+            occurred_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+    db_session.add(
+        SlaEvent(
+            organization_id=org.id,
+            ticket_id=ticket.id,
+            event=SlaEventType.RESOLVED,
+            occurred_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+    result = await db_session.execute(
+        select(SlaEvent).where(SlaEvent.ticket_id == ticket.id)
+    )
+    assert len(result.scalars().all()) == 2
 
 
 async def test_blank_notification_title_is_rejected_by_the_check_constraint(
