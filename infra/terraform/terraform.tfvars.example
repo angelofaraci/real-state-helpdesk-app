@@ -1,0 +1,20 @@
+# Example -var-file for the root Terraform config.
+#
+# Copy this to `terraform.tfvars` (or any other `*.tfvars` name) and fill in
+# real values. `terraform.tfvars` and every other `*.tfvars` file EXCEPT
+# this `.example` one are gitignored - never commit real secret values.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   $EDITOR terraform.tfvars
+#   terraform apply -var-file=terraform.tfvars
+
+# --- SSM Parameter Store secrets (see ssm.tf) -----------------------------
+# Leave these blank in version control; fill in real values only in your
+# local, gitignored terraform.tfvars.
+
+db_password            = ""
+jwt_secret             = ""
+openai_api_key         = ""
+secret_encryption_key  = ""
+whatsapp_verify_token  = ""
+mailgun_signing_key    = ""
