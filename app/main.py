@@ -8,6 +8,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.categories import router as categories_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.contracts import router as contracts_router
+from app.api.v1.health import router as health_router
 from app.api.v1.knowledge_base import router as knowledge_base_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.organizations import router as organizations_router
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     """Build and configure the FastAPI application instance."""
     settings = get_settings()
     application = FastAPI(title=settings.app_name)
+    application.include_router(health_router)
     application.include_router(auth_router)
     application.include_router(users_router)
     application.include_router(organizations_router)
