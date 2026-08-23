@@ -70,6 +70,7 @@ from app.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
 from app.repositories.ticket_embedding_repository import TicketEmbeddingRepository
 from app.repositories.ticket_repository import TicketRepository
 from app.services.chunking import chunk_document
+from app.services.llm_client import build_llm_client
 from app.services.rag_embeddings import OPENAI_RAG_EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
@@ -229,7 +230,7 @@ async def _summarize_resolution(*, ticket: Any, messages: list[Message], client:
             raise PermanentSummaryError(
                 "no OpenAI API key configured for resolution summarization"
             )
-        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        client = build_llm_client(feature="rag_summary", api_key=settings.openai_api_key)
 
     completion = await client.chat.completions.create(
         model=settings.openai_model,

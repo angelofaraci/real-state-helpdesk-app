@@ -27,6 +27,7 @@ from app.services.classifier import (
     ClassificationUnavailableError,
     TaxonomyOption,
 )
+from app.services.llm_client import build_llm_client
 
 # OpenAI SDK exceptions that represent a transient/retryable failure
 # (network hiccup, timeout, rate limit, or a 5xx on OpenAI's side).
@@ -141,7 +142,7 @@ async def classify_with_llm(
             raise ClassificationUnavailableError(
                 "no OpenAI API key configured for the LLM fallback classifier"
             )
-        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        client = build_llm_client(feature="classifier_fallback", api_key=settings.openai_api_key)
 
     try:
         completion = await client.chat.completions.create(

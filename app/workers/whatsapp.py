@@ -77,6 +77,7 @@ from app.repositories.organization_repository import OrganizationRepository
 from app.repositories.user_repository import UserRepository
 from app.services import chat, whatsapp_client
 from app.services.channel_metadata import with_appended
+from app.services.llm_client import build_llm_client
 from app.services.whatsapp_client import WhatsAppSendError
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ def _resolve_llm_client(ctx: dict[str, Any]) -> Any:
     settings = get_settings()
     if not settings.openai_api_key:
         return None
-    return openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    return build_llm_client(feature="whatsapp", api_key=settings.openai_api_key)
 
 
 async def process_whatsapp_message(
