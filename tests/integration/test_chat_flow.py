@@ -146,7 +146,11 @@ class FakeLLMClient:
 
 
 async def _make_org(db_session: AsyncSession) -> Organization:
-    org = Organization(name=f"Test Org {uuid4()}", chat_widget_key=secrets.token_urlsafe(16))
+    org = Organization(
+        name=f"Test Org {uuid4()}",
+        chat_widget_key=secrets.token_urlsafe(16),
+        timezone="UTC",
+    )
     db_session.add(org)
     await db_session.flush()
     return org
@@ -201,11 +205,6 @@ def wired_app(db_session: AsyncSession):
     app.dependency_overrides.clear()
 
 
-@pytest.mark.skip(
-    reason="Requires a live Postgres instance (see docker-compose.yml); "
-    "not reachable in CI (no Postgres service configured). Run manually "
-    "with `docker compose up -d db && pytest tests/integration -m ''`."
-)
 async def test_anonymous_full_flow(wired_app, db_session: AsyncSession) -> None:
     org = await _make_org(db_session)
 
@@ -250,11 +249,6 @@ async def test_anonymous_full_flow(wired_app, db_session: AsyncSession) -> None:
     assert offered_tool_names == {"escalate_to_human"}
 
 
-@pytest.mark.skip(
-    reason="Requires a live Postgres instance (see docker-compose.yml); "
-    "not reachable in CI (no Postgres service configured). Run manually "
-    "with `docker compose up -d db && pytest tests/integration -m ''`."
-)
 async def test_identified_full_flow(wired_app, db_session: AsyncSession) -> None:
     org = await _make_org(db_session)
     tenant = await _make_active_user(db_session, org, role=UserRole.TENANT)
