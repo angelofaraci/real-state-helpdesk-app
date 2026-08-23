@@ -1,5 +1,5 @@
 """Unit tests for `app.workers.analytics` — the analytics-rollup cron job
-(`rollup_daily_metrics`, stage 7 — analytics, PR3).
+(`rollup_daily_metrics`, stage 7 — analytics, PR3/PR6).
 
 `AsyncSession` is mocked, following the exact pattern established by
 `tests/unit/test_worker_sla.py`: the worker opens/commits its own session
@@ -9,13 +9,17 @@ so the fake session here also stubs `begin_nested()` as an async context
 manager.
 
 `analytics_service.tickets_family_metrics`/`sla_family_metrics`/
-`chat_family_metrics`/`upsert_daily_metrics` (all proven independently by
+`chat_family_metrics`/`classifier_family_metrics`/`rag_family_metrics`/
+`upsert_daily_metrics` (all proven independently by
 `tests/unit/test_analytics_service.py` and
 `tests/integration/test_analytics_service_pg.py`) are monkeypatched on the
 service module rather than re-exercised here — this module owns proving
 the WORKER's own control flow: organization iteration, the
 `lookback_days=2` completed-day window, per-family SAVEPOINT fault
-isolation, and cron registration.
+isolation, and cron registration. Every test monkeypatches ALL FIVE family
+functions (even ones it does not assert on) so the worker's real
+`_FAMILY_FUNCTION_NAMES` dispatch never hits real unmocked SQL against a
+fake `AsyncMock` session.
 """
 
 from __future__ import annotations
@@ -106,10 +110,14 @@ async def test_rollup_computes_last_two_completed_local_days_for_every_organizat
     fake_tickets = AsyncMock(return_value=[("tickets_created", Decimal(1))])
     fake_sla = AsyncMock(return_value=[("tickets_resolved", Decimal(0))])
     fake_chat = AsyncMock(return_value=[("chat_sessions_started", Decimal(0))])
+    fake_classifier = AsyncMock(return_value=[])
+    fake_rag = AsyncMock(return_value=[])
     fake_upsert = AsyncMock(return_value=None)
     monkeypatch.setattr(analytics_service, "tickets_family_metrics", fake_tickets)
     monkeypatch.setattr(analytics_service, "sla_family_metrics", fake_sla)
     monkeypatch.setattr(analytics_service, "chat_family_metrics", fake_chat)
+    monkeypatch.setattr(analytics_service, "classifier_family_metrics", fake_classifier)
+    monkeypatch.setattr(analytics_service, "rag_family_metrics", fake_rag)
     monkeypatch.setattr(analytics_service, "upsert_daily_metrics", fake_upsert)
 
     session = _session_with_no_op_savepoints()
@@ -117,12 +125,14 @@ async def test_rollup_computes_last_two_completed_local_days_for_every_organizat
 
     await worker.rollup_daily_metrics(ctx)
 
-    # 2 orgs x 2 lookback days x 3 families = 12 calls per family function,
-    # 4 per family function per org across its 2 days... i.e. each family
-    # function is called once per (org, day) pair: 2 orgs x 2 days = 4.
+    # 2 orgs x 2 lookback days x 5 families = 20 calls total across all
+    # family functions, i.e. each family function is called once per
+    # (org, day) pair: 2 orgs x 2 days = 4.
     assert fake_tickets.await_count == 4
     assert fake_sla.await_count == 4
     assert fake_chat.await_count == 4
+    assert fake_classifier.await_count == 4
+    assert fake_rag.await_count == 4
     session.commit.assert_awaited_once()
 
 
@@ -138,9 +148,13 @@ async def test_rollup_lookback_window_is_the_last_two_COMPLETED_local_days_not_t
     fake_tickets = AsyncMock(return_value=[])
     fake_sla = AsyncMock(return_value=[])
     fake_chat = AsyncMock(return_value=[])
+    fake_classifier = AsyncMock(return_value=[])
+    fake_rag = AsyncMock(return_value=[])
     monkeypatch.setattr(analytics_service, "tickets_family_metrics", fake_tickets)
     monkeypatch.setattr(analytics_service, "sla_family_metrics", fake_sla)
     monkeypatch.setattr(analytics_service, "chat_family_metrics", fake_chat)
+    monkeypatch.setattr(analytics_service, "classifier_family_metrics", fake_classifier)
+    monkeypatch.setattr(analytics_service, "rag_family_metrics", fake_rag)
     monkeypatch.setattr(analytics_service, "upsert_daily_metrics", AsyncMock())
 
     session = _session_with_no_op_savepoints()
@@ -171,10 +185,14 @@ async def test_one_family_raising_does_not_prevent_the_other_families_from_commi
     fake_tickets = AsyncMock(side_effect=RuntimeError("tickets family exploded"))
     fake_sla = AsyncMock(return_value=[("tickets_resolved", Decimal(1))])
     fake_chat = AsyncMock(return_value=[("chat_sessions_started", Decimal(2))])
+    fake_classifier = AsyncMock(return_value=[])
+    fake_rag = AsyncMock(return_value=[])
     fake_upsert = AsyncMock(return_value=None)
     monkeypatch.setattr(analytics_service, "tickets_family_metrics", fake_tickets)
     monkeypatch.setattr(analytics_service, "sla_family_metrics", fake_sla)
     monkeypatch.setattr(analytics_service, "chat_family_metrics", fake_chat)
+    monkeypatch.setattr(analytics_service, "classifier_family_metrics", fake_classifier)
+    monkeypatch.setattr(analytics_service, "rag_family_metrics", fake_rag)
     monkeypatch.setattr(analytics_service, "upsert_daily_metrics", fake_upsert)
 
     session = _session_with_no_op_savepoints()
@@ -186,9 +204,11 @@ async def test_one_family_raising_does_not_prevent_the_other_families_from_commi
 
     # tickets family was attempted for both lookback days but never upserted.
     assert fake_tickets.await_count == 2
-    # sla + chat families still ran AND upserted, for both days.
+    # sla + chat + classifier + rag families still ran, for both days.
     assert fake_sla.await_count == 2
     assert fake_chat.await_count == 2
+    assert fake_classifier.await_count == 2
+    assert fake_rag.await_count == 2
     upserted_keys = [
         row["metric_key"] for call in fake_upsert.call_args_list for row in call.args[1]
     ]
@@ -222,6 +242,12 @@ async def test_running_rollup_twice_for_the_same_day_upserts_stable_rows_no_dupl
     )
     monkeypatch.setattr(
         analytics_service, "chat_family_metrics", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        analytics_service, "classifier_family_metrics", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        analytics_service, "rag_family_metrics", AsyncMock(return_value=[])
     )
     fake_upsert = AsyncMock(return_value=None)
     monkeypatch.setattr(analytics_service, "upsert_daily_metrics", fake_upsert)

@@ -158,8 +158,10 @@ async def get_classifier(
     """Per-category classifier correction-rate review (live query, most
     recent 200 classifications per category), plus the `classifier_
     accuracy`/`llm_fallback_rate` trend series from `daily_metrics` —
-    genuinely empty today since PR3's rollup worker does not write those
-    two metric keys yet."""
+    written nightly by the rollup worker's `classifier_family_metrics`
+    (PR6). A series may still come back empty for an org/day with zero
+    classifications that day, or before the rollup has accumulated
+    history for this org."""
     organization = await _load_organization(session, scope)
     rows = await analytics_service.classifier_review_metrics(session, organization)
 

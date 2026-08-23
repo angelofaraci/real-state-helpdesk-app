@@ -51,6 +51,14 @@ def _scalar_result(value: object) -> MagicMock:
     return result
 
 
+def _row_result(*values: object) -> MagicMock:
+    """Mocks the `.one()` shape used by multi-column `select(...)` calls
+    (e.g. `rag_suggestion_totals`, `sla_compliance_rate`)."""
+    result = MagicMock()
+    result.one.return_value = tuple(values)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # local_day_utc_bounds — org-local calendar day -> UTC datetime range (D3)
 # ---------------------------------------------------------------------------
@@ -108,16 +116,42 @@ async def test_tickets_created_count_query_filters_by_org_and_local_day_utc_boun
 
 
 @pytest.mark.asyncio
-async def test_tickets_family_metrics_returns_tickets_created_only(monkeypatch) -> None:
+async def test_tickets_open_count_query_filters_by_org_and_open_as_of_day_end() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _scalar_result(7)
+
+    result = await analytics_service.tickets_open_count(session, org, date(2026, 8, 20))
+
+    assert result == 7
+    (stmt,), _ = session.execute.call_args
+    sql = _pg_compiled(stmt)
+    assert "FROM tickets" in sql
+    assert "tickets.organization_id" in sql
+    assert "tickets.created_at <" in sql
+    assert "tickets.closed_at IS NULL" in sql
+    assert "tickets.closed_at >=" in sql
+
+
+@pytest.mark.asyncio
+async def test_tickets_family_metrics_returns_tickets_created_and_tickets_open(
+    monkeypatch,
+) -> None:
     org = _org()
     session = AsyncMock()
     monkeypatch.setattr(
         analytics_service, "tickets_created_count", AsyncMock(return_value=5)
     )
+    monkeypatch.setattr(
+        analytics_service, "tickets_open_count", AsyncMock(return_value=8)
+    )
 
     metrics = await analytics_service.tickets_family_metrics(session, org, date(2026, 8, 20))
 
-    assert metrics == [("tickets_created", Decimal(5))]
+    assert metrics == [
+        ("tickets_created", Decimal(5)),
+        ("tickets_open", Decimal(8)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +203,37 @@ async def test_avg_resolution_hours_returns_none_when_no_resolved_events() -> No
 
 
 @pytest.mark.asyncio
-async def test_sla_family_metrics_omits_avg_resolution_hours_when_none(monkeypatch) -> None:
+async def test_sla_compliance_rate_query_excludes_tickets_with_no_sla_due_at() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _row_result(3, 4)
+
+    result = await analytics_service.sla_compliance_rate(session, org, date(2026, 8, 20))
+
+    assert result == Decimal(3) / Decimal(4)
+    (stmt,), _ = session.execute.call_args
+    sql = _pg_compiled(stmt)
+    assert "FROM sla_events" in sql
+    assert "'resolved'" in sql
+    assert "tickets.sla_due_at IS NOT NULL" in sql
+    assert "sla_events.occurred_at <= tickets.sla_due_at" in sql
+
+
+@pytest.mark.asyncio
+async def test_sla_compliance_rate_returns_none_when_zero_eligible_events() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _row_result(0, 0)
+
+    result = await analytics_service.sla_compliance_rate(session, org, date(2026, 8, 20))
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_sla_family_metrics_omits_avg_resolution_hours_and_sla_compliance_rate_when_none(
+    monkeypatch,
+) -> None:
     org = _org()
     session = AsyncMock()
     monkeypatch.setattr(
@@ -178,6 +242,9 @@ async def test_sla_family_metrics_omits_avg_resolution_hours_when_none(monkeypat
     monkeypatch.setattr(
         analytics_service, "avg_resolution_hours", AsyncMock(return_value=None)
     )
+    monkeypatch.setattr(
+        analytics_service, "sla_compliance_rate", AsyncMock(return_value=None)
+    )
 
     metrics = await analytics_service.sla_family_metrics(session, org, date(2026, 8, 20))
 
@@ -185,7 +252,9 @@ async def test_sla_family_metrics_omits_avg_resolution_hours_when_none(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_sla_family_metrics_includes_avg_resolution_hours_when_present(monkeypatch) -> None:
+async def test_sla_family_metrics_includes_avg_resolution_hours_and_sla_compliance_rate_when_present(
+    monkeypatch,
+) -> None:
     org = _org()
     session = AsyncMock()
     monkeypatch.setattr(
@@ -194,12 +263,16 @@ async def test_sla_family_metrics_includes_avg_resolution_hours_when_present(mon
     monkeypatch.setattr(
         analytics_service, "avg_resolution_hours", AsyncMock(return_value=Decimal("3.25"))
     )
+    monkeypatch.setattr(
+        analytics_service, "sla_compliance_rate", AsyncMock(return_value=Decimal("0.8"))
+    )
 
     metrics = await analytics_service.sla_family_metrics(session, org, date(2026, 8, 20))
 
     assert metrics == [
         ("tickets_resolved", Decimal(2)),
         ("avg_resolution_hours", Decimal("3.25")),
+        ("sla_compliance_rate", Decimal("0.8")),
     ]
 
 
@@ -330,6 +403,170 @@ async def test_chat_family_metrics_omits_rates_when_zero_sessions_started(monkey
     metrics = await analytics_service.chat_family_metrics(session, org, date(2026, 8, 20))
 
     assert metrics == [("chat_sessions_started", Decimal(0))]
+
+
+# ---------------------------------------------------------------------------
+# classifier family — classifier_accuracy, llm_fallback_rate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_classifier_accuracy_query_filters_by_org_and_local_day() -> None:
+    org = _org()
+    session = AsyncMock()
+    # `AVG(human_corrected::int)` mocked at 0.25 -> accuracy (the fraction
+    # NOT corrected) is `1 - 0.25` = 0.75.
+    session.execute.return_value = _scalar_result(Decimal("0.25"))
+
+    result = await analytics_service.classifier_accuracy(session, org, date(2026, 8, 20))
+
+    assert result == Decimal("0.75")
+    (stmt,), _ = session.execute.call_args
+    sql = _pg_compiled(stmt)
+    assert "FROM classifications" in sql
+    assert "tickets.organization_id" in sql
+    assert "classifications.created_at >=" in sql
+    assert "human_corrected" in sql
+
+
+@pytest.mark.asyncio
+async def test_classifier_accuracy_returns_none_when_zero_classifications() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _scalar_result(None)
+
+    result = await analytics_service.classifier_accuracy(session, org, date(2026, 8, 20))
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_rate_query_filters_by_org_and_local_day() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _row_result(2, 8)
+
+    result = await analytics_service.llm_fallback_rate(session, org, date(2026, 8, 20))
+
+    assert result == Decimal(2) / Decimal(8)
+    (stmt,), _ = session.execute.call_args
+    sql = _pg_compiled(stmt)
+    assert "FROM classifications" in sql
+    assert "'llm_fallback'" in sql
+    assert "tickets.organization_id" in sql
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_rate_returns_none_when_zero_classifications() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _row_result(0, 0)
+
+    result = await analytics_service.llm_fallback_rate(session, org, date(2026, 8, 20))
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_classifier_family_metrics_composes_both_metrics_when_present(
+    monkeypatch,
+) -> None:
+    org = _org()
+    session = AsyncMock()
+    monkeypatch.setattr(
+        analytics_service, "classifier_accuracy", AsyncMock(return_value=Decimal("0.9"))
+    )
+    monkeypatch.setattr(
+        analytics_service, "llm_fallback_rate", AsyncMock(return_value=Decimal("0.1"))
+    )
+
+    metrics = await analytics_service.classifier_family_metrics(
+        session, org, date(2026, 8, 20)
+    )
+
+    assert metrics == [
+        ("classifier_accuracy", Decimal("0.9")),
+        ("llm_fallback_rate", Decimal("0.1")),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_classifier_family_metrics_returns_empty_list_when_zero_classifications(
+    monkeypatch,
+) -> None:
+    org = _org()
+    session = AsyncMock()
+    monkeypatch.setattr(
+        analytics_service, "classifier_accuracy", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        analytics_service, "llm_fallback_rate", AsyncMock(return_value=None)
+    )
+
+    metrics = await analytics_service.classifier_family_metrics(
+        session, org, date(2026, 8, 20)
+    )
+
+    assert metrics == []
+
+
+# ---------------------------------------------------------------------------
+# RAG family — rag_suggestion_usage_rate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rag_suggestion_day_totals_query_filters_by_org_and_local_day() -> None:
+    org = _org()
+    session = AsyncMock()
+    session.execute.return_value = _row_result(5, 2)
+
+    result = await analytics_service.rag_suggestion_day_totals(
+        session, org, date(2026, 8, 20)
+    )
+
+    assert result == (5, 2)
+    (stmt,), _ = session.execute.call_args
+    sql = _pg_compiled(stmt)
+    assert "FROM messages" in sql
+    assert "tickets.organization_id" in sql
+    assert "messages.created_at >=" in sql
+    assert "is_ai_suggestion" in sql
+    assert "based_on_suggestion_id" in sql
+
+
+@pytest.mark.asyncio
+async def test_rag_family_metrics_includes_usage_rate_when_generated_positive(
+    monkeypatch,
+) -> None:
+    org = _org()
+    session = AsyncMock()
+    monkeypatch.setattr(
+        analytics_service,
+        "rag_suggestion_day_totals",
+        AsyncMock(return_value=(4, 3)),
+    )
+
+    metrics = await analytics_service.rag_family_metrics(session, org, date(2026, 8, 20))
+
+    assert metrics == [("rag_suggestion_usage_rate", Decimal(3) / Decimal(4))]
+
+
+@pytest.mark.asyncio
+async def test_rag_family_metrics_returns_empty_list_when_zero_generated(
+    monkeypatch,
+) -> None:
+    org = _org()
+    session = AsyncMock()
+    monkeypatch.setattr(
+        analytics_service,
+        "rag_suggestion_day_totals",
+        AsyncMock(return_value=(0, 0)),
+    )
+
+    metrics = await analytics_service.rag_family_metrics(session, org, date(2026, 8, 20))
+
+    assert metrics == []
 
 
 # ---------------------------------------------------------------------------
