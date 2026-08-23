@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
@@ -111,6 +112,22 @@ def create_app() -> FastAPI:
     application.add_exception_handler(
         InvalidWebhookSignatureError, _handle_invalid_webhook_signature
     )
+
+    # Stage 8 — devops (PR7). API request-latency/count metrics, exposed
+    # for Prometheus to scrape at `/metrics` (see
+    # `deploy/prometheus/prometheus.yml`'s `api` job). This was originally
+    # scoped to PR5 (`app/api/v1/health.py`) but PR5 shipped without it —
+    # picked up here instead. `/health`/`/ready`/`/metrics` are excluded
+    # from tracked routes: they're polled far more often than real
+    # traffic (Docker `HEALTHCHECK`, k8s probes, Prometheus itself) and
+    # would otherwise dominate the `http_requests_total`/
+    # `http_request_duration_seconds` series with noise unrelated to
+    # actual API usage.
+    if settings.metrics_enabled:
+        Instrumentator(excluded_handlers=["/health", "/ready", "/metrics"]).instrument(
+            application
+        ).expose(application, endpoint="/metrics", include_in_schema=False)
+
     return application
 
 

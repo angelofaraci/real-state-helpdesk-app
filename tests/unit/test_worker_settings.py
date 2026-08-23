@@ -23,12 +23,25 @@ def _function_names() -> list[str]:
     return names
 
 
+def _unwrapped_coroutines() -> list[object]:
+    # Stage 8, PR7 — every entry in `WorkerSettings.functions`/`cron_jobs`
+    # is wrapped in `_with_job_metrics` for success/failure counters.
+    # `functools.wraps` sets `__wrapped__` to the original callable, so
+    # identity comparisons against the un-instrumented module-level
+    # functions still work by unwrapping first.
+    coroutines = []
+    for entry in WorkerSettings.functions:
+        coroutine = getattr(entry, "coroutine", entry)
+        coroutines.append(getattr(coroutine, "__wrapped__", coroutine))
+    return coroutines
+
+
 def test_classify_ticket_is_registered_as_a_runnable_function() -> None:
     assert "classify_ticket" in _function_names()
 
 
 def test_functions_reference_the_classification_module_callables() -> None:
-    coroutines = [getattr(entry, "coroutine", entry) for entry in WorkerSettings.functions]
+    coroutines = _unwrapped_coroutines()
     assert classification.classify_ticket in coroutines
 
 
@@ -37,7 +50,7 @@ def test_embed_resolved_ticket_is_registered_as_a_runnable_function() -> None:
 
 
 def test_functions_reference_the_rag_module_embed_resolved_ticket_callable() -> None:
-    coroutines = [getattr(entry, "coroutine", entry) for entry in WorkerSettings.functions]
+    coroutines = _unwrapped_coroutines()
     assert rag.embed_resolved_ticket in coroutines
 
 
@@ -46,7 +59,7 @@ def test_send_ticket_email_reply_is_registered_as_a_runnable_function() -> None:
 
 
 def test_functions_reference_the_email_module_send_ticket_email_reply_callable() -> None:
-    coroutines = [getattr(entry, "coroutine", entry) for entry in WorkerSettings.functions]
+    coroutines = _unwrapped_coroutines()
     assert email.send_ticket_email_reply in coroutines
 
 
@@ -59,7 +72,7 @@ def test_send_whatsapp_reply_is_registered_as_a_runnable_function() -> None:
 
 
 def test_functions_reference_the_whatsapp_module_callables() -> None:
-    coroutines = [getattr(entry, "coroutine", entry) for entry in WorkerSettings.functions]
+    coroutines = _unwrapped_coroutines()
     assert whatsapp.process_whatsapp_message in coroutines
     assert whatsapp.send_whatsapp_reply in coroutines
 

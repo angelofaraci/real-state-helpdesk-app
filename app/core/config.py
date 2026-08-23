@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     email_message_id_domain: str = "helpdesk.local"
     email_from_fallback_address: str = "no-reply@real-estate-helpdesk.local"
 
+    # Stage 8 — devops (PR7). Worker metrics HTTP server
+    # (`prometheus_client.start_http_server`, started once per worker OS
+    # process in `app.workers.settings.on_startup`). Deliberately NOT
+    # 9100: that's the conventional default port for Prometheus's own
+    # `node_exporter`, and `deploy/prometheus/prometheus.yml` scrapes both
+    # the arq worker and (from PR9/10/11 onward) `node_exporter` — reusing
+    # 9100 for the worker would collide with that convention, so the arq
+    # worker's metrics endpoint uses 9200 instead.
+    metrics_enabled: bool = True
+    worker_metrics_port: int = 9200
+
 
 @lru_cache
 def get_settings() -> Settings:

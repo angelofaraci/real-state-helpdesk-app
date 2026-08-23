@@ -291,6 +291,11 @@ def test_rollup_daily_metrics_is_registered_as_a_cron_job_at_00_30() -> None:
         if isinstance(job, CronJob) and job.coroutine.__name__ == "rollup_daily_metrics"
     ]
     assert len(matching) == 1, "expected exactly one rollup_daily_metrics cron job"
-    assert matching[0].coroutine is worker.rollup_daily_metrics
+    # Stage 8, PR7 — cron coroutines are wrapped in
+    # `app.workers.settings._with_job_metrics` for success/failure
+    # counters; `functools.wraps` sets `__wrapped__` to the original
+    # callable, so unwrap before the identity check.
+    coroutine = getattr(matching[0].coroutine, "__wrapped__", matching[0].coroutine)
+    assert coroutine is worker.rollup_daily_metrics
     assert matching[0].hour == {0}
     assert matching[0].minute == {30}

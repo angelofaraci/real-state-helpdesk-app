@@ -1,0 +1,74 @@
+{
+  "id": null,
+  "uid": "llm-cost-by-feature",
+  "title": "LLM Cost by Feature",
+  "description": "OpenAI token/cost/latency metrics, from app/services/llm_client.py's InstrumentedAsyncOpenAI (stage 8, PR6): llm_cost_usd_total, llm_tokens_total, llm_request_duration_seconds, llm_requests_total — all labeled by feature (e.g. classifier_fallback, rag_summary, rag_api, ticket_embedding, rag_embedding, whatsapp).",
+  "tags": ["real-estate-helpdesk", "llm", "cost"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Estimated USD spend per hour, by feature",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_cost_usd_total[1h]) * 3600) by (feature)",
+          "legendFormat": "{{feature}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Tokens consumed per minute, by feature and token type",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_tokens_total[5m]) * 60) by (feature, token_type)",
+          "legendFormat": "{{feature}} ({{token_type}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total spend, last 24h",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(increase(llm_cost_usd_total[24h]))",
+          "legendFormat": "total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Unpriced requests (missing _PRICE_TABLE entry), by model",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_unpriced_requests_total[1h])) by (model)",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

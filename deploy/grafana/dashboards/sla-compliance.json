@@ -1,0 +1,43 @@
+{
+  "id": null,
+  "uid": "sla-compliance",
+  "title": "SLA Compliance (daily_metrics)",
+  "description": "Reads Stage 7's nightly daily_metrics rollup table (app/models/daily_metric.py, app/workers/analytics.py) directly via the provisioned Postgres datasource, since these are org-scoped daily facts rather than a Prometheus series. metric_key values come from app/models/daily_metric.py's METRIC_KEYS.",
+  "tags": ["real-estate-helpdesk", "sla", "analytics"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "SLA compliance rate, per organization",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT dm.metric_date AS \"time\", o.name AS metric, dm.metric_value AS value FROM daily_metrics dm JOIN organizations o ON o.id = dm.organization_id WHERE dm.metric_key = 'sla_compliance_rate' AND dm.metric_date BETWEEN $__timeFrom()::date AND $__timeTo()::date ORDER BY dm.metric_date",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Latest value, per metric_key and organization",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT DISTINCT ON (dm.organization_id, dm.metric_key) o.name AS organization, dm.metric_key, dm.metric_date, dm.metric_value FROM daily_metrics dm JOIN organizations o ON o.id = dm.organization_id ORDER BY dm.organization_id, dm.metric_key, dm.metric_date DESC",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

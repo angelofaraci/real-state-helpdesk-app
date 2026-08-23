@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning — stage 8 (devops), PR7.
+# Points Grafana at `deploy/grafana/dashboards/` and auto-loads every
+# dashboard JSON file found there.
+
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    folder: "Real Estate Helpdesk"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/files
+      foldersFromFilesStructure: false
