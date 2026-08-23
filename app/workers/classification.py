@@ -122,15 +122,23 @@ async def classify_ticket(ctx: dict[str, Any], ticket_id: UUID, organization_id:
 
         urgency_row = next(row for row in urgency_rows if row.id == result.urgency_id)
 
-        ticket.category_id = result.category_id
-        ticket.urgency_id = result.urgency_id
-        ticket.classification_status = ClassificationStatus.CLASSIFIED
-        ticket.sla_due_at = await resolve_sla_due_at(
+        # Resolve sla_due_at BEFORE mutating the ticket: resolve_sla_due_at
+        # awaits OrganizationRepository.get_or_404, which executes a SELECT
+        # and triggers SQLAlchemy's autoflush. If category_id/urgency_id/
+        # classification_status were already assigned on `ticket` at that
+        # point, autoflush would persist a CLASSIFIED ticket with
+        # sla_due_at still NULL, violating ck_tickets_classified_has_taxonomy.
+        sla_due_at = await resolve_sla_due_at(
             session,
             organization_id=organization_id,
             urgency=urgency_row,
             from_timestamp=ticket.created_at,
         )
+
+        ticket.category_id = result.category_id
+        ticket.urgency_id = result.urgency_id
+        ticket.classification_status = ClassificationStatus.CLASSIFIED
+        ticket.sla_due_at = sla_due_at
 
         await ClassificationRepository(session, scope).upsert(
             ticket_id,
