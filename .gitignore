@@ -13,3 +13,20 @@ node_modules/
 dist/
 build/
 .atl/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Exception: infra/terraform/bootstrap/ intentionally uses `backend "local"`
+# and its state file IS committed to git (see infra/terraform/bootstrap/README.md
+# for why this is safe: that config only ever creates the Terraform state S3
+# bucket + DynamoDB lock table, never secrets).
+!infra/terraform/bootstrap/terraform.tfstate

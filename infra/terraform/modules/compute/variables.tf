@@ -26,18 +26,14 @@ variable "ami_id" {
   default     = null
 }
 
-# SEAM FOR PR10:
-# This PR intentionally does NOT create the IAM role/policies that back the
-# instance profile (that's PR10's scope: ssm:GetParameters access, the SSM
-# Managed Instance Core policy, etc.). Instead, this module only *attaches*
-# an instance profile by name, via this required variable with no default.
-# PR10's stacked branch is expected to add an `iam` module that creates the
-# real `aws_iam_instance_profile` and pass its `.name` output into this
-# variable from the root config. Until PR10 lands, the root config must
-# supply a placeholder value (see root variables.tf) to keep this PR
-# self-contained and independently plannable.
+# This module intentionally does NOT create the IAM role/policies that back
+# the instance profile (ssm:GetParameters access, the SSM Managed Instance
+# Core policy, etc.) - that lives in `modules/iam`. This module only
+# *attaches* an instance profile by name, via this required variable. The
+# root config wires in `module.iam.instance_profile_name` (see
+# infra/terraform/main.tf).
 variable "iam_instance_profile_name" {
-  description = "Name of the IAM instance profile to attach to the EC2 instance. The instance profile itself (IAM role + policies for SSM access) is created by PR10; this module only references it by name."
+  description = "Name of the IAM instance profile to attach to the EC2 instance. The instance profile itself (IAM role + policies for SSM access) is created by modules/iam; this module only references it by name."
   type        = string
 }
 

@@ -16,18 +16,80 @@ variable "name_prefix" {
   default     = "real-state-helpdesk"
 }
 
-# SEAM FOR PR10:
-# The IAM role + policies backing this instance profile (ssm:GetParameters,
-# AmazonSSMManagedInstanceCore, etc.) are created by PR10's `iam` module,
-# which is stacked on top of this PR's branch. This PR has no default here
-# on purpose: it forces whoever runs `terraform plan`/`apply` on this
-# config today to explicitly supply a placeholder (e.g. a manually created
-# profile, or the literal string "TODO-pr10-iam-instance-profile") until
-# PR10 lands and the root config is updated to wire in the real
-# `module.iam.instance_profile_name` output instead.
-variable "iam_instance_profile_name" {
-  description = "Name of the IAM instance profile to attach to the EC2 instance. Supplied by PR10's IAM module once it lands; no default is provided here so this requirement is explicit."
+variable "ssm_parameter_path_prefix" {
+  description = <<-EOT
+    SSM Parameter Store path prefix used both by the `iam` module (to scope
+    the instance role's read permissions) and by the `aws_ssm_parameter`
+    resources in ssm.tf. Keep these in sync - see ssm.tf.
+  EOT
   type        = string
+  default     = "/helpdesk/prod"
+}
+
+variable "github_owner" {
+  description = "GitHub organization/user that owns the deploy repository, used to scope the GitHub OIDC deploy role's trust policy."
+  type        = string
+  default     = "angelofaraci"
+}
+
+variable "github_repo" {
+  description = "GitHub repository name allowed to assume the deploy role via OIDC."
+  type        = string
+  default     = "real-state-helpdesk"
+}
+
+variable "github_oidc_subject" {
+  description = "Exact OIDC `sub` claim the GitHub Actions deploy role's trust policy requires. See modules/iam/variables.tf for why this is pinned to `ref:refs/heads/main`."
+  type        = string
+  default     = "repo:angelofaraci/real-state-helpdesk:ref:refs/heads/main"
+}
+
+variable "backup_s3_bucket_name" {
+  description = "Name of the S3 bucket the nightly pg_dump backup job (app/workers/backup.py, via `settings.backup_s3_bucket`) uploads to. Not the same bucket as Terraform state - see s3-backup.tf."
+  type        = string
+  default     = "real-state-helpdesk-backups"
+}
+
+# --- SSM Parameter Store secrets (see ssm.tf) -----------------------------
+#
+# Every value below is supplied via a gitignored `-var-file` (see
+# terraform.tfvars.example for the expected variable names) - NEVER as a
+# literal default here, and never committed in plaintext anywhere.
+
+variable "db_password" {
+  description = "Application database password, stored as an SSM SecureString and assembled into DATABASE_URL at deploy time (PR12)."
+  type        = string
+  sensitive   = true
+}
+
+variable "jwt_secret" {
+  description = "JWT signing key (overrides Settings.jwt_secret's insecure local-dev default in production)."
+  type        = string
+  sensitive   = true
+}
+
+variable "openai_api_key" {
+  description = "LLM provider (OpenAI) API key (Settings.openai_api_key)."
+  type        = string
+  sensitive   = true
+}
+
+variable "secret_encryption_key" {
+  description = "Fernet key used to encrypt WhatsApp/multichannel credentials at rest (Settings.secret_encryption_key)."
+  type        = string
+  sensitive   = true
+}
+
+variable "whatsapp_verify_token" {
+  description = "Meta (WhatsApp Cloud API) webhook verify token (Settings.whatsapp_verify_token)."
+  type        = string
+  sensitive   = true
+}
+
+variable "mailgun_signing_key" {
+  description = "Email provider (Mailgun) webhook signing key (Settings.mailgun_signing_key)."
+  type        = string
+  sensitive   = true
 }
 
 variable "tags" {

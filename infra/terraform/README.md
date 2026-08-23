@@ -10,19 +10,21 @@ avoid a chicken-and-egg problem where the S3 backend used for remote state
 would itself need to be created by a Terraform run that has nowhere to
 store its state:
 
-1. **`bootstrap/`** (not yet written — this is PR10's scope): a small,
-   separately-applied config using **local state** that creates the S3
-   bucket and DynamoDB lock table referenced by this config's `backend
+1. **`bootstrap/`**: a small, separately-applied config using **local
+   state** (committed to git — see `bootstrap/README.md`) that creates the
+   S3 bucket and DynamoDB lock table referenced by this config's `backend
    "s3"` block in `versions.tf`.
 2. **This directory (`infra/terraform/`, the "main" config)**: uses the
    `backend "s3"` created by the bootstrap config for its remote state,
-   and defines the actual application infrastructure (network + compute
-   modules).
+   and defines the actual application infrastructure (network, compute,
+   and iam modules, plus the flat `ssm.tf` secrets and the backup bucket).
 
-Until PR10 adds `bootstrap/`, `terraform init` in this directory will fail
-to configure its S3 backend, because the referenced bucket/table do not
-exist yet. That is expected for this PR, which only writes the Terraform
-code — it is not applied here.
+`terraform init` in this directory requires `bootstrap/` to have been
+applied first, so the referenced bucket/table already exist. See
+`bootstrap/README.md` for the full bootstrap-then-init flow. Neither
+config is applied in CI or by this repository's automation — both are
+written and validated only (no AWS credentials available in that
+context); `terraform apply` is a manual, human-run operation.
 
 ## Modules
 
@@ -34,34 +36,38 @@ code — it is not applied here.
   profile. `user_data` only installs Docker + the Compose plugin on first
   boot — it does **not** deploy the application (that's PR12's CD
   pipeline, via SSM `send-command`).
+- `modules/iam`: the EC2 instance role (SSM Session Manager/Run Command
+  access via `AmazonSSMManagedInstanceCore`, plus read-only access to this
+  application's SSM Parameter Store secrets) and the GitHub Actions OIDC
+  deploy role used by PR12's CD pipeline to run `ssm:SendCommand` against
+  the instance. See `modules/iam/main.tf` for the full rationale.
 
-## IAM instance profile seam (PR10)
+## Secrets (`ssm.tf`) and the backup bucket (`s3-backup.tf`)
 
-This PR intentionally does **not** create the IAM role or policies backing
-the EC2 instance profile (`ssm:GetParameters` access, the SSM Managed
-Instance Core managed policy, etc.) — that is PR10's scope. Instead:
-
-- `modules/compute` accepts a required `iam_instance_profile_name` string
-  variable and only attaches a profile by name.
-- The root config exposes this as `var.iam_instance_profile_name` with
-  **no default**, forcing an explicit value (a placeholder today, or
-  `module.iam.instance_profile_name` once PR10's `iam` module lands and is
-  wired in).
-
-This keeps PR9 self-contained and independently plannable/validatable
-without depending on PR10 landing first, even though PR10 is stacked on
-top of this branch.
+- `ssm.tf` defines `SecureString` SSM parameters (DB password, JWT
+  signing key, LLM/email/WhatsApp provider secrets) under the
+  `/helpdesk/prod/` path prefix, each sourced from a `sensitive = true`
+  variable — see `terraform.tfvars.example` for the expected `-var-file`
+  shape. Real values live only in a local, gitignored `*.tfvars` file,
+  never committed.
+- `s3-backup.tf` defines the **application** backup bucket that
+  `app/workers/backup.py` uploads nightly `pg_dump` archives to (via
+  `settings.backup_s3_bucket`) — a different bucket from the
+  Terraform-state bucket created in `bootstrap/`. A lifecycle rule expires
+  objects under the `pg_dump/` prefix after 14 days.
 
 ## Running this
 
 ```sh
-# Requires AWS credentials and the bootstrap config (PR10) having been
-# applied first, so the S3 backend bucket/table referenced in versions.tf
-# actually exist.
+# 1. Bootstrap once per AWS account/environment (see bootstrap/README.md).
+cd bootstrap && terraform init && terraform apply && cd ..
+
+# 2. Then the main config, supplying secrets via a gitignored tfvars file.
+cp terraform.tfvars.example terraform.tfvars   # fill in real values
 terraform init
 terraform validate
-terraform plan -var="iam_instance_profile_name=<profile-name>"
-terraform apply -var="iam_instance_profile_name=<profile-name>"
+terraform plan -var-file=terraform.tfvars
+terraform apply -var-file=terraform.tfvars
 ```
 
 `terraform validate` and `terraform fmt -check` can be run without AWS
