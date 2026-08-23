@@ -58,11 +58,6 @@ from app.workers import analytics as worker
 
 pytestmark = [
     pytest.mark.asyncio,
-    pytest.mark.skip(
-        reason="Requires a live Postgres instance (see docker-compose.yml); "
-        "not reachable in CI. Run manually or in CI with "
-        "`docker compose up -d db && pytest tests/integration -m ''`."
-    ),
 ]
 
 
