@@ -1,11 +1,12 @@
-"""Stage 7 — analytics rollup query builders and upsert mechanics (PR3).
+"""Stage 7 — analytics rollup query builders and upsert mechanics (PR3, PR6).
 
 `rollup_daily_metrics` (a later module, `app.workers.analytics`) calls the
 per-family aggregator functions below (`tickets_family_metrics`,
-`sla_family_metrics`, `chat_family_metrics`) once per organization per
-org-local calendar day, then persists whatever they return via
-`upsert_daily_metrics`. This module owns the SQL shape; the worker owns
-iteration, per-family SAVEPOINT fault isolation, and the commit.
+`sla_family_metrics`, `chat_family_metrics`, `classifier_family_metrics`,
+`rag_family_metrics`) once per organization per org-local calendar day,
+then persists whatever they return via `upsert_daily_metrics`. This module
+owns the SQL shape; the worker owns iteration, per-family SAVEPOINT fault
+isolation, and the commit.
 
 Design decisions this module implements (stage-7-analytics design, D3/D6/D7):
 
@@ -112,14 +113,50 @@ async def tickets_created_count(
     return result.scalar_one()
 
 
+async def tickets_open_count(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> int:
+    """COUNT of `tickets` rows that were OPEN as of the end of `local_day`
+    (org-local calendar day): `created_at < end` (created before the day
+    ended) AND (`closed_at IS NULL` OR `closed_at >= end`, i.e. still open
+    at that instant, or closed only after it).
+
+    This is a SNAPSHOT reconstruction from the ticket's CURRENT `closed_at`
+    value — there is no status-change history table in this schema.
+    KNOWN, ACCEPTED LIMITATION: `closed_at` only ever holds the ticket's
+    MOST RECENT close timestamp (`app.services.ticket_service` clears it
+    back to `None` on any reopen, per the DB CHECK constraint
+    `ck_tickets_closed_at_matches_status`). A ticket that was closed,
+    reopened, and closed again more than once will have its EARLIER closed
+    period(s) invisible to this reconstruction — it will read as "open"
+    for any `local_day` that falls inside an earlier (now-overwritten)
+    closed period, if it was open again by the time this query runs. This
+    is accepted as consistent with this module's existing precedent of
+    day-granularity approximation over perfect event-sourcing (see
+    `tickets_resolved_count`'s reopen/re-resolve double-counting)."""
+    start, end = local_day_utc_bounds(organization, local_day)
+    stmt = select(func.count()).select_from(Ticket).where(
+        Ticket.organization_id == organization.id,
+        Ticket.created_at < end,
+        (Ticket.closed_at.is_(None)) | (Ticket.closed_at >= end),
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
+
+
 async def tickets_family_metrics(
     session: AsyncSession, organization: Organization, local_day: date
 ) -> list[tuple[str, Decimal]]:
-    """The tickets family's sole metric: `tickets_created`. Always written,
-    even as `0` — an org with zero tickets created on a day is itself a
-    meaningful fact, unlike the rate metrics below."""
-    count = await tickets_created_count(session, organization, local_day)
-    return [("tickets_created", Decimal(count))]
+    """The tickets family's metrics: `tickets_created` and `tickets_open`.
+    Both are COUNT metrics, always written even as `0` — an org with zero
+    tickets created/open on a day is itself a meaningful fact, unlike the
+    rate metrics below."""
+    created = await tickets_created_count(session, organization, local_day)
+    open_count = await tickets_open_count(session, organization, local_day)
+    return [
+        ("tickets_created", Decimal(created)),
+        ("tickets_open", Decimal(open_count)),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -180,18 +217,56 @@ async def avg_resolution_hours(
     return result.scalar_one_or_none()
 
 
+async def sla_compliance_rate(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> Decimal | None:
+    """Fraction of `local_day`'s resolved `sla_events` (same event set
+    `tickets_resolved_count` counts) that were compliant with their
+    ticket's `sla_due_at`: `sla_events.occurred_at <= tickets.sla_due_at`.
+
+    A resolved event whose ticket has `sla_due_at IS NULL` (never
+    classified) is excluded entirely from BOTH numerator and denominator —
+    there is no due date to judge compliance against, same "exclude,
+    don't distort" principle as `avg_resolution_hours` excluding escalated
+    tickets (D7). Returns `None` when zero eligible resolved events that
+    day (undefined rate), so the caller omits the metric rather than
+    writing a misleading `0`."""
+    start, end = local_day_utc_bounds(organization, local_day)
+    compliant_expr = func.count().filter(SlaEvent.occurred_at <= Ticket.sla_due_at)
+    eligible_expr = func.count()
+    stmt = (
+        select(compliant_expr, eligible_expr)
+        .select_from(SlaEvent)
+        .join(Ticket, Ticket.id == SlaEvent.ticket_id)
+        .where(
+            SlaEvent.organization_id == organization.id,
+            SlaEvent.event == SlaEventType.RESOLVED,
+            SlaEvent.occurred_at >= start,
+            SlaEvent.occurred_at < end,
+            Ticket.sla_due_at.isnot(None),
+        )
+    )
+    compliant, eligible = (await session.execute(stmt)).one()
+    if eligible == 0:
+        return None
+    return Decimal(compliant) / Decimal(eligible)
+
+
 async def sla_family_metrics(
     session: AsyncSession, organization: Organization, local_day: date
 ) -> list[tuple[str, Decimal]]:
     """The SLA family's metrics: `tickets_resolved` (always written, even
-    as `0`) and `avg_resolution_hours` (omitted entirely when there are no
-    eligible resolved events that day — see `avg_resolution_hours`'s
-    docstring)."""
+    as `0`), `avg_resolution_hours`, and `sla_compliance_rate` (both
+    omitted entirely when there are no eligible resolved events that day —
+    see each function's docstring)."""
     resolved = await tickets_resolved_count(session, organization, local_day)
     metrics: list[tuple[str, Decimal]] = [("tickets_resolved", Decimal(resolved))]
     avg_hours = await avg_resolution_hours(session, organization, local_day)
     if avg_hours is not None:
         metrics.append(("avg_resolution_hours", Decimal(avg_hours)))
+    compliance_rate = await sla_compliance_rate(session, organization, local_day)
+    if compliance_rate is not None:
+        metrics.append(("sla_compliance_rate", compliance_rate))
     return metrics
 
 
@@ -283,6 +358,128 @@ async def chat_family_metrics(
     if to_ticket_rate is not None:
         metrics.append(("chat_to_ticket_rate", to_ticket_rate))
     return metrics
+
+
+# ---------------------------------------------------------------------------
+# classifier family — classifier_accuracy, llm_fallback_rate
+# ---------------------------------------------------------------------------
+
+
+async def classifier_accuracy(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> Decimal | None:
+    """`1 - AVG(human_corrected::int)` over `local_day`'s `classifications`
+    for the org (i.e. the fraction that did NOT need human correction),
+    bucketed by `Classification.created_at` and joined to `tickets` for
+    org scope. Unlike `classifier_review_metrics` (the live per-category
+    endpoint query), this is ONE org-wide daily aggregate with no
+    per-category breakdown and no `CLASSIFIER_SAMPLE_WINDOW` cap — every
+    classification created that day counts. Returns `None` when there are
+    zero classifications that day (undefined rate)."""
+    start, end = local_day_utc_bounds(organization, local_day)
+    stmt = (
+        select(func.avg(cast(Classification.human_corrected, Integer)))
+        .select_from(Classification)
+        .join(Ticket, Ticket.id == Classification.ticket_id)
+        .where(
+            Ticket.organization_id == organization.id,
+            Classification.created_at >= start,
+            Classification.created_at < end,
+        )
+    )
+    avg_corrected = (await session.execute(stmt)).scalar_one_or_none()
+    if avg_corrected is None:
+        return None
+    return Decimal(1) - Decimal(avg_corrected)
+
+
+async def llm_fallback_rate(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> Decimal | None:
+    """`COUNT(model_used = 'llm_fallback') / COUNT(*)` over `local_day`'s
+    `classifications` for the org — same bucketing/org-scope join as
+    `classifier_accuracy`. Returns `None` when there are zero
+    classifications that day."""
+    start, end = local_day_utc_bounds(organization, local_day)
+    fallback_expr = func.count().filter(Classification.model_used == "llm_fallback")
+    total_expr = func.count()
+    stmt = (
+        select(fallback_expr, total_expr)
+        .select_from(Classification)
+        .join(Ticket, Ticket.id == Classification.ticket_id)
+        .where(
+            Ticket.organization_id == organization.id,
+            Classification.created_at >= start,
+            Classification.created_at < end,
+        )
+    )
+    fallback, total = (await session.execute(stmt)).one()
+    if total == 0:
+        return None
+    return Decimal(fallback) / Decimal(total)
+
+
+async def classifier_family_metrics(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> list[tuple[str, Decimal]]:
+    """The classifier family's metrics: `classifier_accuracy` and
+    `llm_fallback_rate`, each included only when not `None`. There is no
+    always-written count key in this family (no `classifications_count` in
+    `METRIC_KEYS`), so an org/day with zero classifications produces an
+    EMPTY list — matching `chat_family_metrics`' omit-when-undefined
+    pattern for its rate metrics, just without any always-written sibling
+    this time."""
+    metrics: list[tuple[str, Decimal]] = []
+    accuracy = await classifier_accuracy(session, organization, local_day)
+    if accuracy is not None:
+        metrics.append(("classifier_accuracy", accuracy))
+    fallback_rate = await llm_fallback_rate(session, organization, local_day)
+    if fallback_rate is not None:
+        metrics.append(("llm_fallback_rate", fallback_rate))
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# RAG family — rag_suggestion_usage_rate
+# ---------------------------------------------------------------------------
+
+
+async def rag_suggestion_day_totals(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> tuple[int, int]:
+    """`(generated, used)` — the day-bucketed counterpart to
+    `rag_suggestion_totals` (the live, all-time endpoint query): same
+    `Message` -> `Ticket` join and `is_ai_suggestion`/
+    `based_on_suggestion_id` semantics, additionally filtered to
+    `Message.created_at` within `local_day`'s window."""
+    start, end = local_day_utc_bounds(organization, local_day)
+    generated_expr = func.count().filter(Message.is_ai_suggestion.is_(True))
+    used_expr = func.count(func.distinct(Message.based_on_suggestion_id))
+    stmt = (
+        select(generated_expr, used_expr)
+        .select_from(Message)
+        .join(Ticket, Ticket.id == Message.ticket_id)
+        .where(
+            Ticket.organization_id == organization.id,
+            Message.created_at >= start,
+            Message.created_at < end,
+        )
+    )
+    generated, used = (await session.execute(stmt)).one()
+    return generated, used
+
+
+async def rag_family_metrics(
+    session: AsyncSession, organization: Organization, local_day: date
+) -> list[tuple[str, Decimal]]:
+    """The RAG family's sole metric: `rag_suggestion_usage_rate`
+    (`used / generated`), omitted (empty list) when zero suggestions were
+    generated that day — `None`-on-zero-denominator convention, same
+    shape as `classifier_family_metrics` (no always-written count key)."""
+    generated, used = await rag_suggestion_day_totals(session, organization, local_day)
+    if generated == 0:
+        return []
+    return [("rag_suggestion_usage_rate", Decimal(used) / Decimal(generated))]
 
 
 # ---------------------------------------------------------------------------

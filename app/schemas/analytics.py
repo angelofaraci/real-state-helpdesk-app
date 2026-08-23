@@ -114,10 +114,12 @@ class ClassifierCategoryReview(BaseModel):
 
 class ClassifierResponse(BaseModel):
     categories: list[ClassifierCategoryReview]
-    # Trended from `daily_metrics` — may be empty: PR3's rollup worker
-    # does not yet write `classifier_accuracy`/`llm_fallback_rate` (only
-    # the tickets/SLA/chat families are implemented so far), so these
-    # series are genuinely empty today, not a bug in this endpoint.
+    # Trended from `daily_metrics`, written nightly by the rollup worker's
+    # `classifier_family_metrics` (PR6). May still be empty for an org/day
+    # with zero classifications that day (both metrics are omitted, not
+    # written as `0` — see `analytics_service.classifier_family_metrics`),
+    # or before the nightly rollup has run/accumulated history for a given
+    # org — neither case is a bug in this endpoint.
     accuracy_trend: list[TrendPoint]
     llm_fallback_rate_trend: list[TrendPoint]
 

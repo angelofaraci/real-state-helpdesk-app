@@ -39,8 +39,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sla_defaults import DEFAULT_BUSINESS_HOURS
 from app.models.chat_session import ChatSession
+from app.models.classification import Classification
 from app.models.daily_metric import DailyMetric
-from app.models.enums import SlaEventType, UserRole, UserStatus
+from app.models.enums import AuthorType, SlaEventType, TicketStatus, UserRole, UserStatus
+from app.models.message import Message
 from app.models.organization import Organization
 from app.models.sla_event import SlaEvent
 from app.models.ticket import Ticket
@@ -127,6 +129,38 @@ async def _make_chat_session(
     return chat_session
 
 
+async def _make_classification(
+    db_session: AsyncSession, ticket: Ticket, *, created_at: datetime, **overrides
+) -> Classification:
+    defaults: dict = dict(
+        ticket_id=ticket.id,
+        human_corrected=False,
+        created_at=created_at,
+    )
+    defaults.update(overrides)
+    classification = Classification(**defaults)
+    db_session.add(classification)
+    await db_session.flush()
+    return classification
+
+
+async def _make_message(
+    db_session: AsyncSession, ticket: Ticket, *, created_at: datetime, **overrides
+) -> Message:
+    defaults: dict = dict(
+        ticket_id=ticket.id,
+        author_type=AuthorType.BOT,
+        content="Suggested reply",
+        is_ai_suggestion=False,
+        created_at=created_at,
+    )
+    defaults.update(overrides)
+    message = Message(**defaults)
+    db_session.add(message)
+    await db_session.flush()
+    return message
+
+
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skip(
@@ -187,6 +221,88 @@ async def test_tickets_created_count_org_local_day_boundary_differs_by_timezone(
     assert ba_aug20 == 0
     assert ba_aug19 == 1
     assert tokyo_aug20 == 1
+
+
+# ---------------------------------------------------------------------------
+# tickets family — tickets_open (PR6)
+# ---------------------------------------------------------------------------
+
+
+async def test_tickets_open_count_includes_a_ticket_still_open_as_of_day_end(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    # Created well before the day, never closed.
+    created_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    await _make_ticket(db_session, org, user, created_at=created_at)
+
+    result = await analytics_service.tickets_open_count(db_session, org, local_day)
+
+    assert result == 1
+
+
+async def test_tickets_open_count_includes_a_ticket_closed_after_day_end(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    created_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    # Local day end for 2026-08-20 in UTC-3 is 2026-08-21T03:00:00Z; this
+    # ticket closes well after that.
+    closed_at = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+    await _make_ticket(
+        db_session,
+        org,
+        user,
+        created_at=created_at,
+        status=TicketStatus.CLOSED,
+        closed_at=closed_at,
+    )
+
+    result = await analytics_service.tickets_open_count(db_session, org, local_day)
+
+    assert result == 1
+
+
+async def test_tickets_open_count_excludes_a_ticket_closed_before_day_end(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    created_at = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    # Closed BEFORE the local day's end (2026-08-21T03:00:00Z).
+    closed_at = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    await _make_ticket(
+        db_session,
+        org,
+        user,
+        created_at=created_at,
+        status=TicketStatus.CLOSED,
+        closed_at=closed_at,
+    )
+
+    result = await analytics_service.tickets_open_count(db_session, org, local_day)
+
+    assert result == 0
+
+
+async def test_tickets_open_count_excludes_a_ticket_created_after_the_day(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    # Created AFTER local_day's end.
+    created_at = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+    await _make_ticket(db_session, org, user, created_at=created_at)
+
+    result = await analytics_service.tickets_open_count(db_session, org, local_day)
+
+    assert result == 0
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +394,87 @@ async def test_avg_resolution_hours_returns_none_when_all_resolved_tickets_are_e
 
 
 # ---------------------------------------------------------------------------
+# SLA family — sla_compliance_rate (PR6)
+# ---------------------------------------------------------------------------
+
+
+async def test_sla_compliance_rate_counts_on_time_compliant_and_late_non_compliant(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    created_at = datetime(2026, 8, 20, 8, 0, tzinfo=UTC)
+
+    # On-time: resolved before its due date.
+    on_time_ticket = await _make_ticket(
+        db_session, org, user, created_at=created_at,
+        sla_due_at=datetime(2026, 8, 20, 16, 0, tzinfo=UTC),
+    )
+    await _make_sla_event(
+        db_session, org, on_time_ticket, event=SlaEventType.RESOLVED,
+        occurred_at=datetime(2026, 8, 20, 14, 0, tzinfo=UTC),
+    )
+
+    # Late: resolved after its due date.
+    late_ticket = await _make_ticket(
+        db_session, org, user, created_at=created_at,
+        sla_due_at=datetime(2026, 8, 20, 10, 0, tzinfo=UTC),
+    )
+    await _make_sla_event(
+        db_session, org, late_ticket, event=SlaEventType.RESOLVED,
+        occurred_at=datetime(2026, 8, 20, 15, 0, tzinfo=UTC),
+    )
+
+    result = await analytics_service.sla_compliance_rate(db_session, org, local_day)
+
+    assert result == Decimal(1) / Decimal(2)
+
+
+async def test_sla_compliance_rate_excludes_resolved_events_with_no_sla_due_at(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    created_at = datetime(2026, 8, 20, 8, 0, tzinfo=UTC)
+
+    # On-time, eligible.
+    eligible_ticket = await _make_ticket(
+        db_session, org, user, created_at=created_at,
+        sla_due_at=datetime(2026, 8, 20, 16, 0, tzinfo=UTC),
+    )
+    await _make_sla_event(
+        db_session, org, eligible_ticket, event=SlaEventType.RESOLVED,
+        occurred_at=datetime(2026, 8, 20, 14, 0, tzinfo=UTC),
+    )
+
+    # No sla_due_at at all — excluded from both numerator and denominator,
+    # even though it resolved.
+    unclassified_ticket = await _make_ticket(
+        db_session, org, user, created_at=created_at, sla_due_at=None,
+    )
+    await _make_sla_event(
+        db_session, org, unclassified_ticket, event=SlaEventType.RESOLVED,
+        occurred_at=datetime(2026, 8, 20, 14, 0, tzinfo=UTC),
+    )
+
+    result = await analytics_service.sla_compliance_rate(db_session, org, local_day)
+
+    assert result == Decimal(1)
+
+
+async def test_sla_compliance_rate_returns_none_when_zero_eligible_resolved_events(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+
+    result = await analytics_service.sla_compliance_rate(db_session, org, date(2026, 8, 20))
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # chat family — cohort semantics on session START day (task 3.5/3.6)
 # ---------------------------------------------------------------------------
 
@@ -319,6 +516,146 @@ async def test_chat_family_metrics_omits_rates_with_zero_sessions_started(
     metrics = await analytics_service.chat_family_metrics(db_session, org, date(2026, 8, 20))
 
     assert metrics == [("chat_sessions_started", Decimal(0))]
+
+
+# ---------------------------------------------------------------------------
+# classifier family — classifier_accuracy, llm_fallback_rate (PR6)
+# ---------------------------------------------------------------------------
+
+
+async def test_classifier_family_metrics_computes_accuracy_and_fallback_rate_for_the_day(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    in_day = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+    outside_day = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+
+    # 4 classifications in-day: 1 human_corrected, 3 not -> accuracy 0.75.
+    # 2 of the 4 used model_used='llm_fallback' -> fallback rate 0.5.
+    specs = [
+        dict(human_corrected=True, model_used="sklearn_v1"),
+        dict(human_corrected=False, model_used="sklearn_v1"),
+        dict(human_corrected=False, model_used="llm_fallback"),
+        dict(human_corrected=False, model_used="llm_fallback"),
+    ]
+    for spec in specs:
+        ticket = await _make_ticket(db_session, org, user, created_at=in_day)
+        await _make_classification(db_session, ticket, created_at=in_day, **spec)
+
+    # An out-of-day classification must not affect the day's aggregate.
+    outside_ticket = await _make_ticket(db_session, org, user, created_at=outside_day)
+    await _make_classification(
+        db_session, outside_ticket, created_at=outside_day, human_corrected=True,
+    )
+
+    accuracy = await analytics_service.classifier_accuracy(db_session, org, local_day)
+    fallback_rate = await analytics_service.llm_fallback_rate(db_session, org, local_day)
+    metrics = await analytics_service.classifier_family_metrics(db_session, org, local_day)
+
+    assert accuracy == Decimal("0.75")
+    assert fallback_rate == Decimal("0.5")
+    assert metrics == [
+        ("classifier_accuracy", Decimal("0.75")),
+        ("llm_fallback_rate", Decimal("0.5")),
+    ]
+
+
+async def test_classifier_family_metrics_returns_empty_list_with_zero_classifications(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    local_day = date(2026, 8, 20)
+
+    accuracy = await analytics_service.classifier_accuracy(db_session, org, local_day)
+    fallback_rate = await analytics_service.llm_fallback_rate(db_session, org, local_day)
+    metrics = await analytics_service.classifier_family_metrics(db_session, org, local_day)
+
+    assert accuracy is None
+    assert fallback_rate is None
+    assert metrics == []
+
+
+# ---------------------------------------------------------------------------
+# RAG family — rag_suggestion_usage_rate (PR6)
+# ---------------------------------------------------------------------------
+
+
+async def test_rag_suggestion_day_totals_bucketed_by_message_created_at_day(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    in_day = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+    outside_day = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    ticket = await _make_ticket(db_session, org, user, created_at=in_day)
+
+    # 3 AI-suggested messages in-day.
+    suggestion_1 = await _make_message(
+        db_session, ticket, created_at=in_day, is_ai_suggestion=True,
+    )
+    await _make_message(db_session, ticket, created_at=in_day, is_ai_suggestion=True)
+    await _make_message(db_session, ticket, created_at=in_day, is_ai_suggestion=True)
+
+    # 2 human replies in-day, one based on a suggestion, one not.
+    await _make_message(
+        db_session, ticket, created_at=in_day,
+        based_on_suggestion_id=suggestion_1.id,
+    )
+    await _make_message(db_session, ticket, created_at=in_day)
+    # A second reply based on the SAME suggestion — used counts DISTINCT
+    # suggestion ids, so this must not inflate the used count.
+    await _make_message(
+        db_session, ticket, created_at=in_day,
+        based_on_suggestion_id=suggestion_1.id,
+    )
+
+    # Outside the day — must not be counted.
+    await _make_message(
+        db_session, ticket, created_at=outside_day, is_ai_suggestion=True,
+    )
+
+    generated, used = await analytics_service.rag_suggestion_day_totals(
+        db_session, org, local_day
+    )
+
+    assert generated == 3
+    assert used == 1
+
+
+async def test_rag_family_metrics_computes_usage_rate_when_suggestions_generated(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    user = await _make_user(db_session, org)
+    local_day = date(2026, 8, 20)
+    in_day = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+    ticket = await _make_ticket(db_session, org, user, created_at=in_day)
+
+    suggestion = await _make_message(
+        db_session, ticket, created_at=in_day, is_ai_suggestion=True,
+    )
+    await _make_message(db_session, ticket, created_at=in_day, is_ai_suggestion=True)
+    await _make_message(
+        db_session, ticket, created_at=in_day, based_on_suggestion_id=suggestion.id,
+    )
+
+    metrics = await analytics_service.rag_family_metrics(db_session, org, local_day)
+
+    assert metrics == [("rag_suggestion_usage_rate", Decimal(1) / Decimal(2))]
+
+
+async def test_rag_family_metrics_returns_empty_list_with_zero_suggestions_generated(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session, timezone="America/Argentina/Buenos_Aires")
+    local_day = date(2026, 8, 20)
+
+    metrics = await analytics_service.rag_family_metrics(db_session, org, local_day)
+
+    assert metrics == []
 
 
 # ---------------------------------------------------------------------------

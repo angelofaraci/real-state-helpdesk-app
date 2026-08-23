@@ -56,6 +56,8 @@ _FAMILY_FUNCTION_NAMES = (
     "tickets_family_metrics",
     "sla_family_metrics",
     "chat_family_metrics",
+    "classifier_family_metrics",
+    "rag_family_metrics",
 )
 
 
