@@ -21,6 +21,7 @@ from __future__ import annotations
 import openai
 
 from app.core.config import get_settings
+from app.services.llm_client import build_llm_client
 from app.services.rag_embeddings import RagEmbeddingProvider, get_rag_embedding_provider
 
 
@@ -37,4 +38,4 @@ def get_llm_client() -> openai.AsyncOpenAI:
     `app.workers.rag`/`app.services.llm_fallback` use for their own LLM
     calls."""
     settings = get_settings()
-    return openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    return build_llm_client(feature="rag_api", api_key=settings.openai_api_key)

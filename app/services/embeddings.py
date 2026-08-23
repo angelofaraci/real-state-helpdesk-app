@@ -90,8 +90,8 @@ def get_embedding_provider(
     if provider_name == "local":
         return SentenceTransformerEmbeddingProvider()
 
-    import openai
+    from app.services.llm_client import build_llm_client
 
     api_key = openai_api_key if openai_api_key is not None else settings.openai_api_key
-    client = openai.AsyncOpenAI(api_key=api_key)
+    client = build_llm_client(feature="ticket_embedding", api_key=api_key)
     return OpenAIEmbeddingProvider(client=client)
