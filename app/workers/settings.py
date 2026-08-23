@@ -79,6 +79,7 @@ from app.core.config import get_settings
 from app.services.embeddings import get_embedding_provider
 from app.services.rag_embeddings import get_rag_embedding_provider
 from app.workers.analytics import rollup_daily_metrics
+from app.workers.backup import backup_database_to_s3
 from app.workers.classification import classify_ticket, sweep_pending_classifications
 from app.workers.email import send_ticket_email_reply
 from app.workers.rag import embed_knowledge_document, embed_resolved_ticket
@@ -177,6 +178,12 @@ class WorkerSettings:
         # top-of-hour 5-minute cadence the two jobs above run on — recomputes
         # the last `LOOKBACK_DAYS` completed org-local days for every org.
         cron(_with_job_metrics(rollup_daily_metrics), hour={0}, minute={30}, run_at_startup=False),
+        # Stage 8 — devops, PR8. Nightly at 03:00 UTC, well clear of the
+        # analytics rollup above — `pg_dump`s the database, gzips it, and
+        # uploads it to `settings.backup_s3_bucket` (no-ops when unset).
+        cron(
+            _with_job_metrics(backup_database_to_s3), hour={3}, minute={0}, run_at_startup=False
+        ),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     on_startup = staticmethod(on_startup)
