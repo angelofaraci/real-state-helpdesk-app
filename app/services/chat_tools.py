@@ -18,6 +18,7 @@ turn into a natural-language reply. They DO let unexpected/domain errors
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -265,7 +266,18 @@ async def escalate_to_human(ctx: ChatToolContext, *, reason: str) -> dict[str, A
 
     In every non-anonymous case, `chat_session.status` also moves to
     `ESCALATED` last.
+
+    `chat_session.escalated_at` (stage 7 — analytics) is stamped exactly
+    ONCE, the first time this handler runs for a session, regardless of
+    which of the 3 cases below fires — a second call on an
+    already-escalated session (e.g. the LLM re-invoking the tool, or a
+    human agent retriggering it) must NOT overwrite the original
+    timestamp: it backs the `chat_escalation_rate` metric, which measures
+    time-to-first-escalation, not the most recent attempt.
     """
+    if ctx.chat_session.escalated_at is None:
+        ctx.chat_session.escalated_at = datetime.now(UTC)
+
     if ctx.is_anonymous:
         ctx.chat_session.status = ChatSessionStatus.ESCALATED
         await ctx.session.flush()

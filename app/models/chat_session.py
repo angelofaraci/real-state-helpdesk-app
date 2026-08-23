@@ -69,6 +69,13 @@ class ChatSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         server_default=TicketChannel.WEB.value,
     )
+    # Stage 7 — analytics (migration 0010). Nullable: most sessions never
+    # escalate. Set exactly once, the first time `app.services.chat_tools.
+    # escalate_to_human` runs for this session — never overwritten by a
+    # later re-escalation. Backs the `chat_escalation_rate` daily metric.
+    escalated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         # A session can only be linked to an escalation ticket if it has a

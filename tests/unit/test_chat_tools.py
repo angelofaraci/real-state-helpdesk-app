@@ -265,6 +265,90 @@ async def test_escalate_anonymous_no_ticket(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 3.4b/3.5c/3.6b — stage 7 analytics: escalate_to_human sets
+# `chat_session.escalated_at` exactly once, across all 3 entry points
+# (anonymous, identified-no-ticket, identified-with-ticket). A second call
+# on an already-escalated session must NOT overwrite the original timestamp
+# — it backs the `chat_escalation_rate` daily metric, so its value must
+# stay the FIRST escalation moment, never a later re-escalation attempt.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_escalate_anonymous_sets_escalated_at(monkeypatch) -> None:
+    scope = OrgScope.for_anonymous_chat(uuid4())
+    chat_session = _chat_session(scope, user_id=None, ticket_id=None, escalated_at=None)
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    ctx = ChatToolContext(session=session, scope=scope, chat_session=chat_session)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock())
+
+    await chat_tools.escalate_to_human(ctx, reason="need help")
+
+    assert chat_session.escalated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_escalate_identified_no_ticket_sets_escalated_at(monkeypatch) -> None:
+    scope = _scope(role=UserRole.TENANT)
+    chat_session = _chat_session(scope, ticket_id=None, escalated_at=None)
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    ctx = ChatToolContext(session=session, scope=scope, chat_session=chat_session)
+    ticket = _ticket(scope)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock(return_value=ticket))
+    monkeypatch.setattr(chat_tools, "_find_general_category_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(TicketRepository, "update", AsyncMock(return_value=ticket))
+
+    await chat_tools.escalate_to_human(ctx, reason="urgent")
+
+    assert chat_session.escalated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_escalate_identified_with_ticket_sets_escalated_at(monkeypatch) -> None:
+    scope = _scope(role=UserRole.TENANT)
+    ticket_id = uuid4()
+    chat_session = _chat_session(scope, ticket_id=ticket_id, escalated_at=None)
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    ctx = ChatToolContext(session=session, scope=scope, chat_session=chat_session)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock())
+    monkeypatch.setattr(
+        TicketRepository, "update", AsyncMock(return_value=_ticket(scope, id=ticket_id))
+    )
+
+    await chat_tools.escalate_to_human(ctx, reason="urgent")
+
+    assert chat_session.escalated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_escalate_second_call_does_not_overwrite_escalated_at(monkeypatch) -> None:
+    """An already-escalated session (e.g. re-escalated by the LLM, or a
+    human agent re-triggering the tool) must keep its ORIGINAL
+    `escalated_at` — the metric measures time-to-first-escalation, not the
+    most recent attempt."""
+    scope = _scope(role=UserRole.TENANT)
+    ticket_id = uuid4()
+    original_escalated_at = datetime(2026, 1, 1, tzinfo=UTC)
+    chat_session = _chat_session(
+        scope, ticket_id=ticket_id, escalated_at=original_escalated_at
+    )
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    ctx = ChatToolContext(session=session, scope=scope, chat_session=chat_session)
+    monkeypatch.setattr(ticket_service, "create_ticket", AsyncMock())
+    monkeypatch.setattr(
+        TicketRepository, "update", AsyncMock(return_value=_ticket(scope, id=ticket_id))
+    )
+
+    await chat_tools.escalate_to_human(ctx, reason="still stuck")
+
+    assert chat_session.escalated_at == original_escalated_at
+
+
+# ---------------------------------------------------------------------------
 # 3.5 — escalate_to_human: identified session with no ticket creates then
 # escalates via a DIRECT repository update, never ticket_service.update_ticket.
 # ---------------------------------------------------------------------------

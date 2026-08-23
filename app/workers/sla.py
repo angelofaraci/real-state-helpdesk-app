@@ -37,18 +37,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.scope import OrgScope
+from app.core.sla_defaults import SLA_WARNING_ELAPSED_FRACTION
 from app.models.enums import NotificationKind, SlaEventType, TicketStatus
 from app.models.ticket import Ticket
 from app.services.notification_service import fan_out
 from app.services.sla_event_service import record_once
 
 logger = logging.getLogger(__name__)
-
-# A ticket is flagged "at risk of breach" once this fraction of its total
-# SLA window (`created_at` -> `sla_due_at`) has elapsed. RESOLVED decision
-# for stage 6 PR6: warn at 80% elapsed, breach at 100% elapsed
-# (`ticket.sla_due_at` itself).
-_SLA_WARNING_ELAPSED_FRACTION = 0.8
 
 # Non-terminal ticket statuses are monitored; `escalated` is deliberately
 # NOT terminal (a human agent is actively working an escalated ticket, and
@@ -75,7 +70,7 @@ async def monitor_sla(ctx: dict[str, Any]) -> None:
             Ticket.sla_due_at.isnot(None),
             Ticket.status.notin_(_TERMINAL_STATUSES),
             Ticket.created_at
-            + (Ticket.sla_due_at - Ticket.created_at) * _SLA_WARNING_ELAPSED_FRACTION
+            + (Ticket.sla_due_at - Ticket.created_at) * SLA_WARNING_ELAPSED_FRACTION
             <= now,
         )
         candidates = (await session.execute(stmt)).scalars().all()
@@ -104,7 +99,7 @@ async def _process_ticket(session: AsyncSession, ticket: Ticket, *, now: datetim
     scope = OrgScope.for_background_worker(ticket.organization_id)
     warn_at = ticket.created_at + (
         ticket.sla_due_at - ticket.created_at
-    ) * _SLA_WARNING_ELAPSED_FRACTION
+    ) * SLA_WARNING_ELAPSED_FRACTION
 
     if now >= warn_at:
         warning_event_id = await record_once(
