@@ -3,6 +3,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.v1.analytics import router as analytics_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.categories import router as categories_router
 from app.api.v1.chat import router as chat_router
@@ -94,6 +95,7 @@ def create_app() -> FastAPI:
     application.include_router(chat_router)
     application.include_router(webhooks_email_router)
     application.include_router(webhooks_whatsapp_router)
+    application.include_router(analytics_router)
     application.add_exception_handler(NotFoundError, _handle_not_found)
     application.add_exception_handler(
         ChatRateLimitExceededError, _handle_chat_rate_limit_exceeded
