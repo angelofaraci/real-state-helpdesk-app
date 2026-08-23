@@ -24,7 +24,17 @@ SQLite, and should be run manually or in CI against
 exists.
 """
 
+import secrets
+from uuid import uuid4
+
 import pytest
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.enums import NotificationKind, UserRole, UserStatus
+from app.models.notification import Notification
+from app.models.organization import Organization
+from app.models.user import User
 
 
 @pytest.mark.skip(
@@ -50,13 +60,47 @@ async def test_repeated_resolved_events_for_the_same_ticket_are_allowed() -> Non
     reopen/re-resolve cycle can record it repeatedly."""
 
 
-@pytest.mark.skip(
-    reason="Requires a live Postgres instance (see docker-compose.yml); "
-    "not reachable in CI (no Postgres service configured). Run manually "
-    "with `docker compose up -d db && pytest tests/integration -m ''`."
-)
-async def test_blank_notification_title_is_rejected_by_the_check_constraint() -> None:
+async def test_blank_notification_title_is_rejected_by_the_check_constraint(
+    db_session: AsyncSession,
+) -> None:
     """Inserting a `Notification` with a blank/whitespace-only `title`
     must raise `IntegrityError` against the real
     `ck_notifications_title_not_blank` CHECK constraint, independent of
-    any Python-side validation."""
+    any Python-side validation.
+
+    This is the CI "proof of life" test for Stage 8 PR1: it is the one
+    `_pg`-style real-Postgres test unskipped to prove the CI workflow's
+    new `postgres` + `redis` service containers and `alembic upgrade
+    head` step actually work end to end. The other skip-marked tests in
+    this file remain skipped/stubbed; filling in their bodies is out of
+    scope for this PR.
+    """
+    org = Organization(
+        name=f"Test Org {uuid4()}",
+        chat_widget_key=secrets.token_urlsafe(16),
+        timezone="UTC",
+    )
+    db_session.add(org)
+    await db_session.flush()
+
+    user = User(
+        organization_id=org.id,
+        name="Test User",
+        email=f"{uuid4()}@example.com",
+        role=UserRole.AGENT,
+        password_hash="not-a-real-hash",
+        status=UserStatus.ACTIVE,
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    notification = Notification(
+        organization_id=org.id,
+        user_id=user.id,
+        kind=NotificationKind.SLA_WARNING,
+        title="   ",
+    )
+    db_session.add(notification)
+
+    with pytest.raises(IntegrityError, match="ck_notifications_title_not_blank"):
+        await db_session.flush()
