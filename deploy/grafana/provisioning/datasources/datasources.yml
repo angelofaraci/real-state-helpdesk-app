@@ -1,0 +1,39 @@
+# Grafana datasource provisioning — stage 8 (devops), PR7.
+# Auto-provisions the two datasources every dashboard in
+# `deploy/grafana/dashboards/` expects to already exist. Hostnames/ports
+# match the compose service names PR11 will define
+# (`deploy/prometheus/prometheus.yml`, `deploy/promtail/promtail.yml`).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+
+  # Used by the SLA-compliance dashboard, which reads `daily_metrics`
+  # (Stage 7 — analytics) directly rather than via a Prometheus metric —
+  # `daily_metrics` is an org-scoped nightly rollup table, not something
+  # the API process re-exposes as a Prometheus series.
+  - name: Postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: helpdesk
+    user: helpdesk
+    editable: false
+    secureJsonData:
+      password: helpdesk
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500
+

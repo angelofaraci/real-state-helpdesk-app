@@ -336,5 +336,10 @@ def test_monitor_sla_is_registered_as_a_cron_job_every_five_minutes() -> None:
         if isinstance(job, CronJob) and job.coroutine.__name__ == "monitor_sla"
     ]
     assert len(matching) == 1, "expected exactly one monitor_sla cron job"
-    assert matching[0].coroutine is worker.monitor_sla
+    # Stage 8, PR7 — cron coroutines are wrapped in
+    # `app.workers.settings._with_job_metrics` for success/failure
+    # counters; `functools.wraps` sets `__wrapped__` to the original
+    # callable, so unwrap before the identity check.
+    coroutine = getattr(matching[0].coroutine, "__wrapped__", matching[0].coroutine)
+    assert coroutine is worker.monitor_sla
     assert matching[0].minute == set(range(0, 60, 5))

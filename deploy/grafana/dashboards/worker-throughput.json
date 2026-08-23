@@ -1,0 +1,64 @@
+{
+  "id": null,
+  "uid": "worker-throughput",
+  "title": "Worker Throughput & Failures",
+  "description": "arq worker job success/failure rates and queue depth, from app/workers/settings.py's arq_job_success_total / arq_job_failure_total / arq_queue_depth (stage 8, PR7).",
+  "tags": ["real-estate-helpdesk", "worker"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Job throughput, by function and outcome",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(rate(arq_job_success_total[5m])) by (function)",
+          "legendFormat": "{{function}} success",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(arq_job_failure_total[5m])) by (function)",
+          "legendFormat": "{{function}} failure",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Failure rate, by function (fraction of that function's jobs)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(rate(arq_job_failure_total[5m])) by (function) / (sum(rate(arq_job_success_total[5m])) by (function) + sum(rate(arq_job_failure_total[5m])) by (function))",
+          "legendFormat": "{{function}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Queue depth (arq:queue, ZCARD, sampled on job start)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "arq_queue_depth",
+          "legendFormat": "queued jobs",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
