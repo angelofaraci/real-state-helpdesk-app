@@ -41,7 +41,7 @@ variable "github_repo" {
 variable "github_oidc_subject" {
   description = "Exact OIDC `sub` claim the GitHub Actions deploy role's trust policy requires. See modules/iam/variables.tf for why this is pinned to `ref:refs/heads/main`."
   type        = string
-  default     = "repo:angelofaraci/real-state-helpdesk:ref:refs/heads/main"
+  default     = "repo:angelofaraci/real-state-helpdesk-app:ref:refs/heads/main"
 }
 
 variable "backup_s3_bucket_name" {

@@ -54,7 +54,7 @@ variable "github_oidc_subject" {
     workflow's trigger ever changes).
   EOT
   type        = string
-  default     = "repo:angelofaraci/real-state-helpdesk:ref:refs/heads/main"
+  default     = "repo:angelofaraci/real-state-helpdesk-app:ref:refs/heads/main"
 }
 
 variable "create_github_oidc_provider" {
