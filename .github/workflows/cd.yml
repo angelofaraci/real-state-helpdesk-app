@@ -1,0 +1,132 @@
+name: CD
+
+# Runs on every push to `main` (i.e. after a PR merges). Builds/pushes the
+# production image, then triggers the instance-side deploy sequence via
+# SSM Run Command.
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  id-token: write # required for the deploy job's AWS OIDC federation
+  packages: write # required to push to GHCR
+  contents: read
+
+env:
+  IMAGE: ghcr.io/angelofaraci/real-state-helpdesk
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHCR authentication does NOT go through AWS IAM — PR10's
+      # `infra/terraform/modules/iam` module documents this explicitly
+      # (see its `main.tf` header comment). The ephemeral, workflow-scoped
+      # `GITHUB_TOKEN` is sufficient and is the correct credential here;
+      # the AWS OIDC role (used in the `deploy` job below) has no GHCR
+      # permissions and is never used for this step.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      # Assumes PR10's `github_deploy` IAM role
+      # (`infra/terraform/modules/iam/outputs.tf`'s `github_deploy_role_arn`
+      # output) via GitHub's OIDC identity provider — no long-lived AWS
+      # credentials are stored in this repository.
+      #
+      # The role ARN and target instance ID are read from GitHub Actions
+      # *repository variables* (`vars.*`), not secrets: an IAM role ARN and
+      # an EC2 instance ID are both identifiers, not credentials — knowing
+      # them grants no access on their own (the OIDC trust policy on the
+      # role itself, scoped to this exact repo, is what actually gates
+      # access). Keeping them as plain `vars` (visible in workflow run
+      # logs/settings) rather than `secrets` (redacted in logs) makes
+      # debugging a failed deploy run easier, with no loss of security.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The SSM command's script content is intentionally thin: it only
+      # pulls the new image tag and hands off to `scripts/deploy.sh`,
+      # which already exists on the instance (deployed as part of the
+      # application checkout/image, not inlined here). All actual
+      # deploy/rollback LOGIC lives in that instance-side script so it
+      # stays testable/shellcheck-able independently of this workflow.
+      - name: Trigger deploy via SSM Run Command
+        id: send_command
+        run: |
+          set -euo pipefail
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.DEPLOY_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="cd /opt/helpdesk && IMAGE_TAG=${{ github.sha }} ./scripts/deploy.sh" \
+            --comment "CD deploy ${{ github.sha }}" \
+            --query "Command.CommandId" \
+            --output text)
+          echo "command_id=${COMMAND_ID}" >> "$GITHUB_OUTPUT"
+
+      # `send-command` is fire-and-forget on its own — poll for the actual
+      # remote script's completion status so this job fails whenever the
+      # instance-side deploy (including any rollback) failed, instead of
+      # reporting green just because the command was accepted.
+      - name: Wait for deploy command to finish
+        run: |
+          set -euo pipefail
+          COMMAND_ID="${{ steps.send_command.outputs.command_id }}"
+          INSTANCE_ID="${{ vars.DEPLOY_INSTANCE_ID }}"
+
+          for _ in $(seq 1 30); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
+
+            echo "deploy command status: ${STATUS}"
+
+            case "$STATUS" in
+              Success)
+                exit 0
+                ;;
+              Failed | Cancelled | TimedOut)
+                echo "::error::deploy command finished with status ${STATUS}"
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query "StandardErrorContent" \
+                  --output text || true
+                exit 1
+                ;;
+              *)
+                sleep 10
+                ;;
+            esac
+          done
+
+          echo "::error::timed out waiting for deploy command ${COMMAND_ID} to finish"
+          exit 1
