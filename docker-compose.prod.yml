@@ -28,7 +28,7 @@ services:
         condition: service_healthy
 
   api:
-    image: ghcr.io/angelofaraci/real-state-helpdesk:${IMAGE_TAG}
+    image: ghcr.io/angelofaraci/real-state-helpdesk-app:${IMAGE_TAG}
     restart: unless-stopped
     env_file:
       - .env
@@ -51,7 +51,7 @@ services:
         condition: service_healthy
 
   worker:
-    image: ghcr.io/angelofaraci/real-state-helpdesk:${IMAGE_TAG}
+    image: ghcr.io/angelofaraci/real-state-helpdesk-app:${IMAGE_TAG}
     restart: unless-stopped
     command: arq app.workers.settings.WorkerSettings
     env_file:
